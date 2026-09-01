@@ -1,0 +1,32 @@
+# 运行数据与机密（绝不入库）
+data/
+.test-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+.env
+.env.local
+
+# Android 构建产物与签名（构建产物体积大且含本地路径）
+.tooling/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/signing.properties
+android/.idea/
+*.jks
+*.keystore
+*.keystore.id
+
+# 发布产物（历史版本压缩包与 APK 不进 git，发布走 GitHub Releases）
+release/*.apk
+release/*.aab
+fangcun-release-*.tar.gz
+fangcun-gpt-review-package-*.zip
+
+# 内部评审与交付报告（含个人部署上下文，不适合公开）
+review-package/
+docs/v2.2-internal-audit.md
+docs/方寸-v2.2-最终交付报告.md

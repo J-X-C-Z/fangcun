@@ -1,0 +1,53 @@
+plugins {
+    id("com.android.application")
+}
+
+val releaseStoreFile = System.getenv("FANGCUN_KEYSTORE_PATH")
+val releaseStorePassword = System.getenv("FANGCUN_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("FANGCUN_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("FANGCUN_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
+android {
+    namespace = "app.fangcun"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "app.fangcun"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 30
+        versionName = "2.6.1"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}

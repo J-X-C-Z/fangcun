@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HEALTH_URL=${FANGCUN_HEALTH_URL:-http://127.0.0.1:18443/api/health}
+
+echo "[1/4] systemd 服务状态"
+systemctl is-enabled fangcun.service
+systemctl is-active fangcun.service
+
+echo "[2/4] 本机健康接口"
+HEALTH_RESPONSE=$(curl --fail --silent --show-error "$HEALTH_URL")
+printf '%s\n' "$HEALTH_RESPONSE"
+printf '%s' "$HEALTH_RESPONSE" | grep -q '"ok":true'
+
+echo "[3/4] 监听地址"
+ss -lnt | grep -q '127\.0\.0\.1:18443'
+ss -lnt | grep '127\.0\.0\.1:18443'
+
+echo "[4/4] 最近服务日志"
+journalctl -u fangcun.service -n 20 --no-pager
+
+echo "验收通过：方寸仅监听服务器本机 127.0.0.1:18443。"
