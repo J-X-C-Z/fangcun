@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 if (-not $ReleaseArchive) {
-    $ReleaseArchive = Join-Path $projectRoot "release\fangcun-release-2.6.0.tar.gz"
+    $ReleaseArchive = Join-Path $projectRoot "release\fangcun-release-2.7.0.tar.gz"
 }
 $ReleaseArchive = (Resolve-Path -LiteralPath $ReleaseArchive).Path
 
@@ -27,8 +27,8 @@ try {
 }
 
 $target = "${UserName}@${Server}"
-$remoteArchive = "/tmp/fangcun-release-2.6.0.tar.gz"
-$remoteStage = "/tmp/fangcun-release-2.6.0"
+$remoteArchive = "/tmp/fangcun-release-2.7.0.tar.gz"
+$remoteStage = "/tmp/fangcun-release-2.7.0"
 $identityArgs = @()
 if ($IdentityFile) {
     $identityPath = (Resolve-Path -LiteralPath $IdentityFile).Path
@@ -54,7 +54,7 @@ sudo bash deploy/verify.sh
 "@
 
 Write-Host "[3/5] Backing up remote data"
-Write-Host "[4/5] Installing 2.6.0 and restarting the service"
+Write-Host "[4/5] Installing 2.7.0 and restarting the service"
 Write-Host "[5/5] Verifying service health, bind address, and logs"
 $remoteCommand | & ssh @identityArgs -tt -p $Port -- $target "bash -s"
 if ($LASTEXITCODE -ne 0) { throw "Remote upgrade or verification failed. Backups remain in /var/backups/fangcun." }

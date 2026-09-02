@@ -21,8 +21,8 @@ android {
         applicationId = "app.fangcun"
         minSdk = 26
         targetSdk = 36
-        versionCode = 30
-        versionName = "2.6.1"
+        versionCode = 31
+        versionName = "2.7.0"
     }
 
     signingConfigs {

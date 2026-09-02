@@ -29,7 +29,7 @@ assert.equal(meeting.important, true);
 assert.equal(meeting.urgent, false);
 assert.equal(meeting.reminderMinutes, 30);
 
-const course = parseNaturalInput("每周二第1-2节 大学物理 1-17周 东校区B12-201 提前10分钟", context);
+const course = parseNaturalInput("每周二第1-2节 大学物理 1-17周 湖畔校区B12-201 提前10分钟", context);
 assert.equal(course.kind, "course");
 assert.equal(course.day, 2);
 assert.equal(course.startSection, 1);
@@ -58,7 +58,7 @@ assert.equal(twoCourses.courseId, "");
 assert.ok(twoCourses.issues.some((issue) => issue.field === "courseId"));
 
 assert.equal(parseNaturalBatch("今天交报告；每周三第6-8节 形势与政策 11-13周", context).length, 2);
-const multiDayCourse = parseNaturalBatch("课程 大学物理，周二、周五第1-2节，1-17周，东校区B12-201，张老师，提前15分钟提醒", context);
+const multiDayCourse = parseNaturalBatch("课程 大学物理，周二、周五第1-2节，1-17周，湖畔校区B12-201，张老师，提前15分钟提醒", context);
 assert.equal(multiDayCourse.length, 2);
 assert.deepEqual(multiDayCourse.map((item) => item.day), [2, 5]);
 assert.ok(multiDayCourse.every((item) => item.startSection === 1 && item.endSection === 2 && item.weeks.length === 17));

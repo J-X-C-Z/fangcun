@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "2.6.0"
+    [string]$Version = "2.7.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,9 +22,12 @@ try {
     foreach ($file in $rootFiles) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination (Join-Path $stageRoot $file)
     }
-    foreach ($directory in @("android", "deploy", "docs", "imports")) {
+    foreach ($directory in @("android", "deploy", "docs")) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $directory) -Destination (Join-Path $stageRoot $directory) -Recurse
     }
+    New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot "imports\examples") | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot "imports\README.md") -Destination (Join-Path $stageRoot "imports\README.md")
+    Copy-Item -LiteralPath (Join-Path $projectRoot "imports\examples\fictional-university-timetable-sample.json") -Destination (Join-Path $stageRoot "imports\examples\fictional-university-timetable-sample.json")
 
     foreach ($generatedPath in @(
         (Join-Path $stageRoot "android\.gradle"),

@@ -1,4 +1,4 @@
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.7.0";
 const APP_BUILD = "20260901-google-calendar-sync";
 const STORAGE_KEY = "fangcun-data-v1";
 const THEME_KEY = "fangcun-theme";
@@ -308,6 +308,7 @@ function normalizeData(saved) {
     task.endTime ||= "";
     task.location ||= "";
     if (task.reminderMinutes === undefined) task.reminderMinutes = -1;
+    task.alarmMode = Boolean(task.alarmMode);
     task.estimateMinutes = Number(task.estimateMinutes) > 0 ? Number(task.estimateMinutes) : 0;
     task.focusPinned = Boolean(task.focusPinned);
     task.focusDismissedDate ||= "";
@@ -319,7 +320,7 @@ function normalizeData(saved) {
     project.startDate ||= localISO(new Date(project.createdAt || Date.now()));
     project.milestones = Array.isArray(project.milestones) ? project.milestones : [];
   });
-  saved.courses.forEach((course) => { course.code ||= ""; course.campus ||= ""; course.link ||= ""; course.credits ||= ""; });
+  saved.courses.forEach((course) => { course.code ||= ""; course.campus ||= ""; course.link ||= ""; course.credits ||= ""; course.alarmMode = Boolean(course.alarmMode); });
   applyCourseColorSystem(saved.courses);
   return saved;
 }
@@ -476,6 +477,59 @@ async function apiRequest(pathname, options = {}) {
   }
   return payload;
 }
+
+function renderVoiceCommands(commands) {
+  const list = $("#voiceCommandList");
+  if (!list) return;
+  list.innerHTML = commands.length ? commands.map((command) => `<article class="voice-command-item ${command.status}"><div><strong>${escapeHTML(command.text)}</strong><span>${escapeHTML(command.summary)} · ${new Date(command.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>${command.status === "created" ? `<button type="button" class="text-button" data-undo-voice-command="${escapeHTML(command.id)}">撤销</button>` : "<em>已撤销</em>"}</article>`).join("") : '<div class="empty-state">尚无语音命令记录</div>';
+}
+
+async function loadVoiceAssistant() {
+  if (!syncState.authenticated) return;
+  try {
+    const [token, history] = await Promise.all([apiRequest("/api/voice/token"), apiRequest("/api/voice/commands")]);
+    const status = $("#voiceTokenStatus");
+    status.textContent = token.enabled ? `令牌已启用${token.lastAccessAt ? ` · 最近使用 ${formatSyncTime(token.lastAccessAt).replace("最近同步 ", "")}` : ""}` : "尚未生成语音令牌";
+    status.dataset.enabled = String(token.enabled);
+    $("#generateVoiceTokenBtn").textContent = token.enabled ? "重置令牌" : "生成令牌";
+    renderVoiceCommands(history.commands || []);
+  } catch (error) { $("#voiceTokenStatus").textContent = `加载失败：${error.message}`; }
+}
+
+async function generateVoiceToken() {
+  if ($("#voiceTokenStatus").dataset.enabled === "true" && !confirm("重置后旧语音令牌会立即失效，是否继续？")) return;
+  try {
+    const result = await apiRequest("/api/voice/token", { method: "POST", body: "{}" });
+    $("#voiceTokenValue").value = result.token;
+    $("#voiceTokenValueRow").classList.remove("hidden");
+    showToast("新语音令牌已生成，请立即保存");
+    loadVoiceAssistant();
+  } catch (error) { showToast(error.message); }
+}
+
+async function copyVoiceToken() {
+  const input = $("#voiceTokenValue");
+  if (!input.value) return;
+  try { await navigator.clipboard.writeText(input.value); }
+  catch { input.select(); document.execCommand("copy"); }
+  showToast("语音令牌已复制");
+}
+
+async function undoVoiceCommand(commandId) {
+  if (!confirm("撤销会删除这条语音命令创建的内容，是否继续？")) return;
+  try {
+    await apiRequest(`/api/voice/commands/${encodeURIComponent(commandId)}/undo`, { method: "POST", body: "{}" });
+    applyCloudData(await fetchCloudState());
+    await loadVoiceAssistant();
+    showToast("语音命令已撤销");
+  } catch (error) { showToast(error.message); }
+}
+
+window.FangcunVoiceCommandCreated = async () => {
+  if (!syncState.authenticated) return;
+  try { applyCloudData(await fetchCloudState()); await loadVoiceAssistant(); }
+  catch (error) { console.warn("无法刷新语音命令结果", error); }
+};
 
 function scheduleCloudSync() {
   if (!syncState.authenticated || syncState.conflict || syncState.applyingRemote) return;
@@ -1709,6 +1763,7 @@ function openTaskModal(taskId = "", presetQuadrant = null, preset = {}) {
   $("#taskEndTime").value = task?.endTime || preset.endTime || "";
   $("#taskLocation").value = task?.location || preset.location || "";
   $("#taskReminder").value = String(task?.reminderMinutes ?? preset.reminderMinutes ?? -1);
+  $("#taskAlarmMode").checked = Boolean(task?.alarmMode || preset.alarmMode);
   $("#taskEstimate").value = task?.estimateMinutes || preset.estimateMinutes || "";
   $("#taskType").value = task?.type || preset.type || "task";
   $("#taskRepeat").value = task?.repeat || preset.repeat || "none";
@@ -1743,6 +1798,7 @@ function saveTask(event) {
     endTime: $("#taskEndTime").value,
     location: $("#taskLocation").value.trim(),
     reminderMinutes: Number($("#taskReminder").value),
+    alarmMode: $("#taskAlarmMode").checked && Number($("#taskReminder").value) >= 0,
     estimateMinutes: Math.max(0, Number($("#taskEstimate").value) || 0),
     type: $("#taskType").value,
     repeat: $("#taskRepeat").value,
@@ -2087,6 +2143,7 @@ function openCourseModal(courseId = "") {
   $("#courseDay").value = course?.day || Math.min(new Date().getDay() || 7, data.semester.showWeekend ? 7 : 5);
   $("#courseColor").value = course?.colorAuto === false ? vividCourseColor(course.color, data.courses.length) : "auto";
   $("#courseReminder").value = String(course?.reminderMinutes ?? 10);
+  $("#courseAlarmMode").checked = Boolean(course?.alarmMode);
   renderSectionOptions(course?.startSection || data.timeSlots[0]?.number || 1, course?.endSection || data.timeSlots[0]?.number || 1);
   $("#courseWeeks").value = course ? formatWeeks(course.weeks) : `1-${data.semester.totalWeeks}`;
   $("#courseNotes").value = course?.notes || "";
@@ -2127,6 +2184,7 @@ function saveCourse(event) {
     colorAuto: $("#courseColor").value === "auto",
     weeks,
     reminderMinutes: Number($("#courseReminder").value),
+    alarmMode: $("#courseAlarmMode").checked && Number($("#courseReminder").value) >= 0,
     notes: $("#courseNotes").value.trim(),
   };
   if (!values.name) return;
@@ -2151,6 +2209,7 @@ function duplicateCourseTime() {
   $("#courseLink").value = course.link || "";
   $("#courseColor").value = course.colorAuto === false ? course.color : "auto";
   $("#courseReminder").value = String(course.reminderMinutes ?? 10);
+  $("#courseAlarmMode").checked = Boolean(course.alarmMode);
   $("#courseWeeks").value = formatWeeks(course.weeks);
   $("#courseNotes").value = course.notes || "";
   $("#courseEyebrow").textContent = "同一课程 · 新时段";
@@ -2816,8 +2875,9 @@ function nativeReminderItems() {
     const reminderTarget = taskReminderDateTime(task);
     const target = new Date(`${reminderTarget.date}T${reminderTarget.time}:00`).getTime();
     const at = target - task.reminderMinutes * 60000;
-    if (at > now.getTime()) items.push({ id: `task-${task.id}-${reminderTarget.date}-${reminderTarget.time}`, title: reminderTarget.label, body: `${reminderTarget.time} · ${task.title}`, at });
+    if (at > now.getTime()) items.push({ id: `task-${task.id}-${reminderTarget.date}-${reminderTarget.time}`, title: `${task.title} · ${reminderTarget.date}`, body: `${reminderTarget.time} · ${task.title}`, at, systemAlarm: Boolean(task.alarmMode) });
   });
+  const preparedSystemCourses = new Set();
   for (let offset = 0; offset <= 90; offset += 1) {
     const date = addDays(now, offset);
     data.courses.map((course) => courseOccurrence(course, date)).filter((course) => course && course.reminderMinutes >= 0).forEach((course) => {
@@ -2825,7 +2885,10 @@ function nativeReminderItems() {
       if (!slot) return;
       const start = new Date(`${localISO(date)}T${slot.startTime}:00`).getTime();
       const at = start - course.reminderMinutes * 60000;
-      if (at > now.getTime()) items.push({ id: `course-${course.id}-${localISO(date)}`, title: `${course.name} 即将开始`, body: `${courseTimeText(course)}${coursePlace(course) ? ` · ${coursePlace(course)}` : ""}`, at });
+      if (at > now.getTime() && (!course.alarmMode || !preparedSystemCourses.has(course.id))) {
+        items.push({ id: `course-${course.id}-${localISO(date)}`, title: `${course.name} · ${localISO(date)}`, body: `${courseTimeText(course)}${coursePlace(course) ? ` · ${coursePlace(course)}` : ""}`, at, systemAlarm: Boolean(course.alarmMode) });
+        if (course.alarmMode) preparedSystemCourses.add(course.id);
+      }
     });
   }
   return items.sort((a, b) => a.at - b.at).slice(0, 240);
@@ -2893,7 +2956,7 @@ function nativeCalendarItems() {
       if (endAt <= startAt) endAt = startAt + 30 * 60000;
     }
     const key = `task:${task.id}`;
-    items.push({ key, kind: "task", nativeId: mapping.nativeIds?.[key] || 0, title: task.due && !task.startDate ? `DDL · ${task.title}` : task.title, description: task.notes || "由方寸双向同步", location: task.location || "", startAt, endAt, allDay, reminderMinutes: Number(task.reminderMinutes ?? -1) });
+    items.push({ key, kind: "task", nativeId: mapping.nativeIds?.[key] || 0, title: task.due && !task.startDate ? `DDL · ${task.title}` : task.title, description: task.notes || "由方寸双向同步", location: task.location || "", startAt, endAt, allDay, reminderMinutes: task.alarmMode ? -1 : Number(task.reminderMinutes ?? -1) });
   });
   if (data.semester?.startDate) data.courses.forEach((course) => {
     (course.weeks || []).forEach((week) => {
@@ -2906,7 +2969,7 @@ function nativeCalendarItems() {
       const endSlot = slotByNumber(exception?.type === "reschedule" ? exception.endSection : course.endSection);
       if (!startSlot || !endSlot) return;
       const key = `course:${course.id}:${originalDate}`;
-      items.push({ key, kind: "course", nativeId: mapping.nativeIds?.[key] || 0, title: exception?.name || course.name, description: [course.code, course.teacher, course.notes].filter(Boolean).join(" · "), location: exception?.location || coursePlace(course), startAt: epochFor(date, startSlot.startTime), endAt: epochFor(date, endSlot.endTime), allDay: false, reminderMinutes: Number(course.reminderMinutes ?? -1) });
+      items.push({ key, kind: "course", nativeId: mapping.nativeIds?.[key] || 0, title: exception?.name || course.name, description: [course.code, course.teacher, course.notes].filter(Boolean).join(" · "), location: exception?.location || coursePlace(course), startAt: epochFor(date, startSlot.startTime), endAt: epochFor(date, endSlot.endTime), allDay: false, reminderMinutes: course.alarmMode ? -1 : Number(course.reminderMinutes ?? -1) });
     });
   });
   return items;
@@ -3111,7 +3174,7 @@ function checkReminders() {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const sent = JSON.parse(localStorage.getItem("fangcun-sent-reminders") || "{}");
   const now = new Date();
-  data.courses.map((course) => courseOccurrence(course, now)).filter((course) => course && course.reminderMinutes >= 0).forEach((course) => {
+  data.courses.map((course) => courseOccurrence(course, now)).filter((course) => course && course.reminderMinutes >= 0 && !course.alarmMode).forEach((course) => {
     const slot = slotByNumber(course.startSection);
     if (!slot) return;
     const startsAt = new Date(`${localISO()}T${slot.startTime}:00`);
@@ -3122,7 +3185,7 @@ function checkReminders() {
       sent[key] = Date.now();
     }
   });
-  data.tasks.filter((task) => !task.completed && (task.due === localISO() || task.startDate === localISO())).forEach((task) => {
+  data.tasks.filter((task) => !task.completed && !task.alarmMode && (task.due === localISO() || task.startDate === localISO())).forEach((task) => {
     const reminderTarget = taskReminderDateTime(task);
     const key = `task-${task.id}-${reminderTarget?.date || task.due}-${reminderTarget?.time || "day"}`;
     if (sent[key]) return;
@@ -3333,7 +3396,7 @@ function initStaticEvents() {
   });
   $("#exportBtn").addEventListener("click", exportData);
   $("#importInput").addEventListener("change", importData);
-  $("#cloudBtn").addEventListener("click", () => { renderCloudPanel(); $("#cloudModal").showModal(); loadAdminPanel(); });
+  $("#cloudBtn").addEventListener("click", () => { renderCloudPanel(); $("#cloudModal").showModal(); loadAdminPanel(); loadVoiceAssistant(); });
   $("#cloudAuthForm").addEventListener("submit", submitCloudAuth);
   $("#cloudRegisterBtn").addEventListener("click", () => { $("#cloudModal").close(); showAuthGate(); setAuthMode("register"); });
   $("#pullCloudBtn").addEventListener("click", pullCloudData);
@@ -3341,6 +3404,10 @@ function initStaticEvents() {
   $("#restoreLocalBtn").addEventListener("click", restorePreCloudData);
   $("#logoutCloudBtn").addEventListener("click", logoutCloud);
   $("#changeCloudPasswordBtn").addEventListener("click", changeCloudPassword);
+  $("#generateVoiceTokenBtn").addEventListener("click", generateVoiceToken);
+  $("#copyVoiceTokenBtn").addEventListener("click", copyVoiceToken);
+  $("#refreshVoiceCommandsBtn").addEventListener("click", loadVoiceAssistant);
+  $("#voiceCommandList").addEventListener("click", (event) => { const button = event.target.closest("[data-undo-voice-command]"); if (button) undoVoiceCommand(button.dataset.undoVoiceCommand); });
   $("#registrationToggle").addEventListener("change", toggleRegistration);
   $("#refreshAdminBtn").addEventListener("click", loadAdminPanel);
   $("#migrateOwnerDataBtn").addEventListener("click", migrateOwnerToMember);
@@ -3389,6 +3456,16 @@ function init() {
   syncNativeReminders();
   initializeCloud().then(handleCalendarReturn);
   updateSystemCalendarStatus();
+  if (typeof location !== "undefined" && typeof URLSearchParams !== "undefined") {
+    const voiceParams = new URLSearchParams(location.search || "");
+    if (voiceParams.get("quick") === "voice") setTimeout(() => {
+      const input = mobileAppLayout() ? $("#mobileCaptureInput") : $("#quickInput");
+      const proposedText = String(voiceParams.get("text") || "").trim();
+      if (input && proposedText) input.value = proposedText;
+      input?.focus();
+      if (typeof history !== "undefined") history.replaceState(null, "", `${location.pathname}${location.hash}`);
+    }, 120);
+  }
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     let refreshing = false;
     const offerUpdate = (worker) => {

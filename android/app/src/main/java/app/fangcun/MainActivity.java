@@ -38,8 +38,9 @@ public class MainActivity extends Activity {
         webView = findViewById(R.id.webview);
         webView.setBackgroundColor(Color.rgb(244, 242, 237));
         configureWebView();
-        if (savedInstanceState == null) webView.loadUrl(APP_URL + integrationReturnQuery(getIntent()));
-        else webView.restoreState(savedInstanceState);
+        if (savedInstanceState == null) {
+            if (!handleVoiceIntent(getIntent())) webView.loadUrl(APP_URL + integrationReturnQuery(getIntent()));
+        } else webView.restoreState(savedInstanceState);
     }
 
     private void configureEdgeToEdgeWindow() {
@@ -170,8 +171,19 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (handleVoiceIntent(intent)) return;
         String query = integrationReturnQuery(intent);
         if (!query.isEmpty() && webView != null) webView.loadUrl(APP_URL + query);
+    }
+
+    private boolean handleVoiceIntent(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        if (data == null || !"fangcun".equalsIgnoreCase(data.getScheme()) || !"voice".equalsIgnoreCase(data.getHost())) return false;
+        String text = data.getQueryParameter("text");
+        Uri.Builder target = Uri.parse(APP_URL).buildUpon().appendQueryParameter("quick", "voice");
+        if (text != null && !text.trim().isEmpty()) target.appendQueryParameter("text", text.trim());
+        webView.loadUrl(target.build().toString());
+        return true;
     }
 
     private String integrationReturnQuery(Intent intent) {

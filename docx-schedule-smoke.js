@@ -4,7 +4,7 @@ const parser = require("./docx-schedule-parser.js");
 const cell = (text, props = "") => `<w:tc><w:tcPr>${props}</w:tcPr>${text ? `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>` : ""}</w:tc>`;
 const row = (cells) => `<w:tr>${cells.join("")}</w:tr>`;
 const emptyDays = () => Array.from({ length: 6 }, () => cell(""));
-const xml = `<w:document xmlns:w="urn:test"><w:body><w:tbl>${row([cell("节次"), ...["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"].map((day) => cell(day))])}${row([cell("第1节 08:00~08:45"), cell("高等数学 / 张三 / 东校区B12-101 / 1-16周", '<w:vMerge w:val="restart"/>'), ...emptyDays()])}${row([cell("第2节 08:55~09:40"), cell("", "<w:vMerge/>"), ...emptyDays()])}</w:tbl></w:body></w:document>`;
+const xml = `<w:document xmlns:w="urn:test"><w:body><w:tbl>${row([cell("节次"), ...["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"].map((day) => cell(day))])}${row([cell("第1节 08:00~08:45"), cell("高等数学 / 张三 / 湖畔校区B12-101 / 1-16周", '<w:vMerge w:val="restart"/>'), ...emptyDays()])}${row([cell("第2节 08:55~09:40"), cell("", "<w:vMerge/>"), ...emptyDays()])}</w:tbl></w:body></w:document>`;
 
 const result = parser.parseScheduleDocumentXml(xml, { totalWeeks: 20 });
 assert.equal(result.courses.length, 1, "纵向合并的 Word 单元格应合并为一条连续课程");

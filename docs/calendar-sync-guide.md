@@ -1,4 +1,4 @@
-# 方寸 v2.6 全平台日历双向同步与提醒
+# 方寸 v2.7 全平台日历双向同步与提醒
 
 ## 1. 最终数据流
 
@@ -21,14 +21,14 @@
 
 小米系统日历由 APK 合并：开启同步、打开或返回 App、以及方寸内修改后触发。当前不是每秒实时协同编辑；正常传播时间是服务器通道 0–5 分钟，再加一次 APK 打开/返回。
 
-## 2. 云服务器 Workbench 升级 v2.6.0
+## 2. 云服务器 Workbench 升级 v2.7.0
 
-在 Windows 电脑把 `release/fangcun-release-2.6.0.tar.gz` 上传到 Workbench 的 `~/`。在 Workbench 终端逐条执行：
+在 Windows 电脑把 `release/fangcun-release-2.7.0.tar.gz` 上传到 Workbench 的 `/home/deployer/`。在 Workbench 终端逐条执行：
 
 ```bash
-mkdir -p ~/fangcun-2.6.0
-tar -xzf ~/fangcun-release-2.6.0.tar.gz -C ~/fangcun-2.6.0
-cd ~/fangcun-2.6.0
+mkdir -p /home/deployer/fangcun-2.7.0
+tar -xzf /home/deployer/fangcun-release-2.7.0.tar.gz -C /home/deployer/fangcun-2.7.0
+cd /home/deployer/fangcun-2.7.0
 sudo bash deploy/backup.sh
 sudo bash deploy/install.sh
 sudo bash deploy/verify.sh
@@ -134,7 +134,7 @@ APK 会用系统浏览器完成授权，并通过 `fangcun://outlook-connected` 
 
 ## 6. Android / HyperOS 系统日历
 
-1. 安装 `fangcun-v2.6.0-debug.apk`，或使用同一正式签名生成的 release APK。
+1. 安装 `fangcun-v2.7.0-debug.apk`，或使用同一正式签名生成的 release APK。
 2. 登录方寸，打开“日历 → 导入与同步 → 小米 / Android 系统日历”。
 3. 点“开启双向同步”，允许日历读写、通知和“闹钟与提醒”。
 4. 在 HyperOS 应用设置中允许自启动，电池策略设为“不限制”。
@@ -198,7 +198,7 @@ Google Cloud 中的 Web 重定向 URI 与 `GOOGLE_REDIRECT_URI` 必须完全相�
 
 ### APK 授权后没有返回
 
-确认安装的是 v2.6.0 APK，并允许浏览器打开 `fangcun://` 链接。旧 APK 只认识 Outlook 回跳，不认识 Google 回跳。
+确认安装的是 v2.7.0 APK，并允许浏览器打开 `fangcun://` 链接。旧 APK 不包含本版的小米系统闹钟和安全语音深链处理。
 
 ### 小米日历没有“方寸”
 
@@ -215,7 +215,7 @@ Google Cloud 中的 Web 重定向 URI 与 `GOOGLE_REDIRECT_URI` 必须完全相�
 ```text
 明天下午3点到5点参加物理小组讨论，重要不紧急，提前30分钟提醒，地点B12-201
 9月18日晚上8点交化学实验报告，重要紧急，提前1天提醒，关联化学原理I
-每周二、周五第1-2节大学物理A（上），1-17周，东校区B12-201，提前15分钟提醒
+每周二、周五第1-2节大学物理A（上），1-17周，湖畔校区B12-201，提前15分钟提醒
 ```
 
 确认智能预览后一次写入。方寸云端保存后，Outlook、Google 和小米通道会按上述流程继续传播。

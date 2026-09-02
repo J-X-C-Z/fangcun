@@ -33,4 +33,4 @@ assert.match(html, /id="outlookIntegrationSetting"[\s\S]*id="googleIntegrationSe
 assert.match(app, /function syncOutlookNow[\s\S]*function syncGoogleNow[\s\S]*function reconcileNativeCalendar/, "网页端必须接通 Outlook、Google 与系统日历双向合并逻辑");
 assert.match(installer, /server\.js outlook-sync\.js google-sync\.js package\.json/, "部署脚本必须复制外部日历同步服务端模块");
 
-console.log("v2.6 核心流程检查通过：今天首页、智能确认、导入撤销、手机项目布局、三端双向日历入口与显式 PWA 更新均已覆盖。");
+console.log("v2.7 核心流程检查通过：今天首页、智能确认、导入撤销、手机项目布局、三端双向日历入口与显式 PWA 更新均已覆盖。");

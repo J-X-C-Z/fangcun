@@ -30,3 +30,6 @@ fangcun-gpt-review-package-*.zip
 review-package/
 docs/v2.2-internal-audit.md
 docs/方寸-v2.2-最终交付报告.md
+
+# 个人真实数据（只留在本地，绝不进 git；示例在 imports/examples/）
+/imports/*.json

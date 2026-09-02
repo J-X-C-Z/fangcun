@@ -1,4 +1,4 @@
-# 方寸 2.6.0 发布、服务器升级、密码恢复与 APK 安装
+# 方寸 2.7.0 发布、服务器升级、密码恢复与 APK 安装
 
 本说明对应项目源码根目录（即本仓库）。发布脚本不会开放服务器端口；方寸仍只监听 `127.0.0.1:18443`，继续由 Cloudflare Tunnel 代理。
 
@@ -19,7 +19,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy\build-release.ps1
 
 输出：
 
-- `release/fangcun-release-2.6.0.tar.gz`
+- `release/fangcun-release-2.7.0.tar.gz`
 - 屏幕上同时显示 SHA-256，可在上传前后核对
 
 ## 3. 一条命令升级服务器
@@ -41,16 +41,16 @@ powershell -ExecutionPolicy Bypass -File .\deploy\upload-and-upgrade.ps1 `
 ## 4. 手动上传的等价命令
 
 ```powershell
-scp -P 22 .\release\fangcun-release-2.6.0.tar.gz admin@服务器地址:/tmp/fangcun-release-2.6.0.tar.gz
+scp -P 22 .\release\fangcun-release-2.7.0.tar.gz admin@服务器地址:/tmp/fangcun-release-2.7.0.tar.gz
 ssh -p 22 admin@服务器地址
 ```
 
 登录服务器后：
 
 ```bash
-install -d -m 0700 /tmp/fangcun-release-2.6.0
-tar -xzf /tmp/fangcun-release-2.6.0.tar.gz -C /tmp/fangcun-release-2.6.0
-cd /tmp/fangcun-release-2.6.0
+install -d -m 0700 /tmp/fangcun-release-2.7.0
+tar -xzf /tmp/fangcun-release-2.7.0.tar.gz -C /tmp/fangcun-release-2.7.0
+cd /tmp/fangcun-release-2.7.0
 sudo bash deploy/backup.sh
 sudo bash deploy/install.sh
 sudo bash deploy/verify.sh
@@ -67,10 +67,10 @@ sudoedit /etc/fangcun.env
 ```
 
 ```dotenv
-FANGCUN_PUBLIC_ORIGIN=https://fangcun.example.org
-FANGCUN_OUTLOOK_CLIENT_ID=你的应用客户端ID
-FANGCUN_OUTLOOK_CLIENT_SECRET=你的客户端密钥
-FANGCUN_OUTLOOK_TENANT=common
+MICROSOFT_CLIENT_ID=你的应用客户端ID
+MICROSOFT_CLIENT_SECRET=你的客户端密钥值
+MICROSOFT_TENANT=common
+MICROSOFT_REDIRECT_URI=https://你的方寸域名/api/integrations/outlook/callback
 ```
 
 保存后执行：
@@ -82,12 +82,12 @@ sudo bash /opt/fangcun/deploy/verify.sh
 
 完整的 Entra 回调地址、权限与 Android 日历设置见 `docs/calendar-sync-guide.md`。
 
-## 5.5 忘记 member 或 owner 密码时
+## 5.5 忘记普通账号或 owner 密码时
 
-服务器不会保存明文密码，因此旧密码无法查看或导出。升级到 2.6.0 后，在云服务器 Workbench 终端分别运行：
+服务器不会保存明文密码，因此旧密码无法查看或导出。升级到 2.7.0 后，在云服务器 Workbench 终端运行：
 
 ```bash
-sudo bash /opt/fangcun/deploy/reset-password.sh member
+sudo bash /opt/fangcun/deploy/reset-password.sh '<用户名>'
 sudo bash /opt/fangcun/deploy/reset-password.sh owner
 ```
 
@@ -104,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File .\android\build-apk.ps1
 第一次会将官方 JDK 17、Android SDK 36、Build Tools 36.0.0 与 Gradle 9.5 放到项目 `.tooling/`；以后可以加 `-SkipDownloads`。输出测试包：
 
 ```text
-release/fangcun-v2.6.0-debug.apk
+release/fangcun-v2.7.0-debug.apk
 ```
 
 测试包适合自己安装验收，不应用于公开商店或长期分发。正式签名配置见 `android/README.md`，生产密钥必须离线备份并永久保留。
@@ -115,7 +115,7 @@ release/fangcun-v2.6.0-debug.apk
 
 ```powershell
 .\.tooling\android-sdk\platform-tools\adb.exe devices
-.\.tooling\android-sdk\platform-tools\adb.exe install -r .\release\fangcun-v2.6.0-debug.apk
+.\.tooling\android-sdk\platform-tools\adb.exe install -r .\release\fangcun-v2.7.0-debug.apk
 ```
 
 首次启动允许通知和日历读写权限；在小米应用设置中允许自启动、后台运行，并把省电策略设为无限制。日历互通入口位于方寸“日历 → 导入与同步”。

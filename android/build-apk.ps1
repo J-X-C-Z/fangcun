@@ -132,7 +132,7 @@ try {
 
 if ($Variant -eq "Debug" -or $Variant -eq "Both") {
     $debugApk = Join-Path $androidDir "app\build\outputs\apk\debug\app-debug.apk"
-    $debugTarget = Join-Path $releaseRoot "fangcun-v2.6.1-debug.apk"
+    $debugTarget = Join-Path $releaseRoot "fangcun-v2.7.0-debug.apk"
     Copy-Item -LiteralPath $debugApk -Destination $debugTarget -Force
     Write-Host "Installable debug APK: $debugTarget"
     Get-FileHash -LiteralPath $debugTarget -Algorithm SHA256 | Format-List
@@ -140,7 +140,7 @@ if ($Variant -eq "Debug" -or $Variant -eq "Both") {
 
 if ($Variant -eq "Release" -or $Variant -eq "Both") {
     $releaseApk = Join-Path $androidDir "app\build\outputs\apk\release\app-release.apk"
-    $releaseTarget = Join-Path $releaseRoot "fangcun-v2.6.1-release.apk"
+    $releaseTarget = Join-Path $releaseRoot "fangcun-v2.7.0-release.apk"
     Copy-Item -LiteralPath $releaseApk -Destination $releaseTarget -Force
     Write-Host "Signed release APK: $releaseTarget"
     Get-FileHash -LiteralPath $releaseTarget -Algorithm SHA256 | Format-List

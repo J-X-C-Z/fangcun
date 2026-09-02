@@ -1,5 +1,5 @@
-const CACHE_NAME = "fangcun-v260-google-calendar-sync";
-const APP_SHELL = ["./", "./index.html", "./styles.css?v=2.6.0", "./v22-layout.css?v=2.6.0", "./smart-parser.js?v=2.6.0", "./docx-schedule-parser.js?v=2.6.0", "./app.js?v=2.6.0", "./manifest.webmanifest?v=2.6.0", "./icon.svg"];
+const CACHE_NAME = "fangcun-v270-xiaomi-voice";
+const APP_SHELL = ["./", "./index.html", "./styles.css?v=2.7.0", "./v22-layout.css?v=2.7.0", "./smart-parser.js?v=2.7.0", "./docx-schedule-parser.js?v=2.7.0", "./app.js?v=2.7.0", "./manifest.webmanifest?v=2.7.0", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));

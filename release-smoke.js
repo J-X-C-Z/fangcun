@@ -35,6 +35,8 @@ for (const marker of ["npm run check", "scp", "ssh", "deploy/backup.sh", "deploy
 }
 assert(upload.includes("127.0.0.1:18443"), "Deployment script must preserve the private bind address");
 assert(buildRelease.includes("android\\app\\build") && buildRelease.includes("android\\.gradle"), "Release staging does not exclude Android build caches");
+assert(!buildRelease.includes('@("android", "deploy", "docs", "imports")'), "Release archive must not copy ignored personal imports");
+assert(buildRelease.includes("fictional-university-timetable-sample.json"), "Release archive is missing the fictional import example");
 assert(install.includes("outlook-sync.js") && install.includes("google-sync.js") && install.includes("reset-password.js") && install.includes("deploy/reset-password.sh") && install.includes("deploy/verify.sh"), "Server install payload is incomplete");
 assert(verify.includes("systemctl is-active") && verify.includes("127\\.0\\.0\\.1:18443"), "Server verification is incomplete");
 

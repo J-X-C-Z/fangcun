@@ -3,7 +3,7 @@
     {
       "name": "示例课程甲（物理类）",
       "code": "SAMPLE-PHY-001",
-      "campus": "东校区",
+      "campus": "湖畔校区",
       "teacher": "张老师",
       "position": "B12-201",
       "day": 2,
@@ -17,7 +17,7 @@
     {
       "name": "示例课程乙（通识类）",
       "code": "SAMPLE-POL-002",
-      "campus": "东校区",
+      "campus": "湖畔校区",
       "teacher": "李老师 / 王老师 / 刘老师",
       "position": "B12-130",
       "day": 4,
@@ -31,7 +31,7 @@
     {
       "name": "示例课程甲（物理类）",
       "code": "SAMPLE-PHY-001",
-      "campus": "东校区",
+      "campus": "湖畔校区",
       "teacher": "张老师",
       "position": "B12-201",
       "day": 5,

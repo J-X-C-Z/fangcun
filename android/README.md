@@ -12,7 +12,7 @@
 powershell -ExecutionPolicy Bypass -File .\android\build-apk.ps1
 ```
 
-脚本会把 Temurin JDK 17、Android 命令行工具、SDK 36、Build Tools 36.0.0 和 Gradle 9.5 下载到项目内的 `.tooling/`，生成 Gradle Wrapper，随后输出可直接安装的测试包 `release/fangcun-v2.6.0-debug.apk`。这些工具不会写入系统级 JDK 或 Android Studio 配置。
+脚本会把 Temurin JDK 17、Android 命令行工具、SDK 36、Build Tools 36.0.0 和 Gradle 9.5 下载到项目内的 `.tooling/`，生成 Gradle Wrapper，随后输出可直接安装的测试包 `release/fangcun-v2.7.0-debug.apk`。这些工具不会写入系统级 JDK 或 Android Studio 配置。
 
 也可以安装 Android Studio 后打开本目录，等待 Gradle 同步并运行 `app` 到真机。
 
@@ -28,7 +28,7 @@ $env:FANGCUN_KEY_PASSWORD = "你的密钥密码"
 powershell -ExecutionPolicy Bypass -File .\android\build-apk.ps1 -Variant Release -SkipDownloads
 ```
 
-输出文件为 `release/fangcun-v2.6.0-release.apk`。以后升级必须使用同一密钥，否则 Android 不允许覆盖安装。
+输出文件为 `release/fangcun-v2.7.0-release.apk`。以后升级必须使用同一密钥，否则 Android 不允许覆盖安装。
 
 ## 安装到 Android
 
@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File .\android\build-apk.ps1 -Variant Releas
 
 ```powershell
 .\.tooling\android-sdk\platform-tools\adb.exe devices
-.\.tooling\android-sdk\platform-tools\adb.exe install -r .\release\fangcun-v2.6.0-debug.apk
+.\.tooling\android-sdk\platform-tools\adb.exe install -r .\release\fangcun-v2.7.0-debug.apk
 ```
 
 首次启动后允许通知、日历读写权限；在小米“应用信息”中允许自启动、后台运行，并将省电策略设为无限制，才能获得稳定提醒。
