@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy\upload-and-upgrade.ps1 `
 
 如果 SSH 使用密码登录，可省略 `-IdentityFile`。脚本依次执行：本地全量检查、SCP 上传、服务器数据备份、安装并重启、健康接口检查、确认服务只监听 `127.0.0.1:18443`、显示最近日志。
 
-首次安装还没有数据库时会跳过备份；升级时备份写入服务器 `/var/backups/fangcun/`。脚本不会修改云服务器安全组、防火墙、80/443、Hysteria 或 Cloudflare Tunnel。
+首次安装还没有数据库时会跳过备份；升级时备份写入服务器 `/var/backups/fangcun/`。脚本不会修改阿里云安全组、防火墙、80/443、Hysteria 或 Cloudflare Tunnel。
 
 ## 4. 手动上传的等价命令
 
@@ -57,6 +57,28 @@ sudo bash deploy/verify.sh
 ```
 
 首次安装没有旧数据库时，直接省略 `backup.sh`。
+
+### 应用商店生产信息
+
+准备商店候选版时，在服务器 `/etc/fangcun.env` 中加入与开发者主体、隐私政策和备案材料完全一致的公开信息：
+
+```dotenv
+FANGCUN_OPERATOR_NAME=公开运营者名称
+FANGCUN_CONTACT=公开联系方式
+FANGCUN_APP_BEIAN=APP备案号
+FANGCUN_ICP_BEIAN=ICP备案号
+FANGCUN_STORE_RELEASE=true
+```
+
+然后重启并执行商店模式验收：
+
+```bash
+sudo systemctl restart fangcun
+sudo bash /opt/fangcun/deploy/verify.sh
+curl --fail https://你的方寸域名/privacy.html
+```
+
+在真实信息和备案取得前不要把 `FANGCUN_STORE_RELEASE` 设为 `true`，也不要提交商店审核。
 
 ## 5. 配置 Outlook 双向同步
 
@@ -80,11 +102,11 @@ sudo systemctl restart fangcun
 sudo bash /opt/fangcun/deploy/verify.sh
 ```
 
-完整的 Entra 回调地址、权限与 Android 日历设置见 `docs/calendar-sync-guide.md`。
+完整的 Entra 回调地址、权限与 REDMI 日历设置见 `docs/calendar-sync-guide.md`。
 
 ## 5.5 忘记普通账号或 owner 密码时
 
-服务器不会保存明文密码，因此旧密码无法查看或导出。升级到 2.7.0 后，在云服务器 Workbench 终端运行：
+服务器不会保存明文密码，因此旧密码无法查看或导出。升级到 2.7.0 后，在阿里云 Workbench 终端运行：
 
 ```bash
 sudo bash /opt/fangcun/deploy/reset-password.sh '<用户名>'
@@ -109,7 +131,7 @@ release/fangcun-v2.7.0-debug.apk
 
 测试包适合自己安装验收，不应用于公开商店或长期分发。正式签名配置见 `android/README.md`，生产密钥必须离线备份并永久保留。
 
-## 7. 安装到 Android
+## 7. 安装到 REDMI
 
 开启手机“开发者选项 → USB 调试”，连接电脑后：
 
@@ -118,7 +140,7 @@ release/fangcun-v2.7.0-debug.apk
 .\.tooling\android-sdk\platform-tools\adb.exe install -r .\release\fangcun-v2.7.0-debug.apk
 ```
 
-首次启动允许通知和日历读写权限；在小米应用设置中允许自启动、后台运行，并把省电策略设为无限制。日历互通入口位于方寸“日历 → 导入与同步”。
+首次启动允许通知和日历读写权限；在小米应用设置中允许自启动、后台运行，并把省电策略设为无限制。日历互通入口位于方寸“日历 → 同步与导入”。
 
 ## 8. 回滚
 

@@ -10,7 +10,7 @@ $stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) "fangcun-release-$Versi
 $archive = Join-Path $releaseRoot "fangcun-release-$Version.tar.gz"
 
 $rootFiles = @(
-    ".env.example", "README.md", "package.json", "index.html", "styles.css", "v22-layout.css",
+    ".env.example", "README.md", "package.json", "index.html", "privacy.html", "styles.css", "v22-layout.css",
     "smart-parser.js", "docx-schedule-parser.js", "app.js", "manifest.webmanifest", "icon.svg",
     "service-worker.js", "server.js", "outlook-sync.js", "google-sync.js", "reset-password.js", "smart-parser-smoke.js",
     "docx-schedule-smoke.js", "outlook-sync-smoke.js", "google-sync-smoke.js", "smoke-test.js", "runtime-smoke.js",

@@ -142,6 +142,12 @@ if ($Variant -eq "Release" -or $Variant -eq "Both") {
     $releaseApk = Join-Path $androidDir "app\build\outputs\apk\release\app-release.apk"
     $releaseTarget = Join-Path $releaseRoot "fangcun-v2.7.0-release.apk"
     Copy-Item -LiteralPath $releaseApk -Destination $releaseTarget -Force
+    $apksigner = Join-Path $sdkRoot "build-tools\36.0.0\apksigner.bat"
+    $zipalign = Join-Path $sdkRoot "build-tools\36.0.0\zipalign.exe"
+    & $zipalign -c -P 16 4 $releaseTarget
+    if ($LASTEXITCODE -ne 0) { throw "Release APK zip alignment verification failed." }
+    & $apksigner verify --verbose --print-certs $releaseTarget
+    if ($LASTEXITCODE -ne 0) { throw "Release APK signature verification failed." }
     Write-Host "Signed release APK: $releaseTarget"
     Get-FileHash -LiteralPath $releaseTarget -Algorithm SHA256 | Format-List
 }

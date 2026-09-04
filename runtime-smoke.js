@@ -147,8 +147,8 @@ vm.runInContext(`
   const semanticCourses = normalizeData({
     tasks: [], projects: [], semester: defaultSemester(), timeSlots: defaultTimeSlots(), courseExceptions: [], calendarRules: [], settings: {},
     courses: [
-      { id: "physics-tue", name: "大学物理", code: "GEN1001", day: 2, startSection: 1, endSection: 2, weeks: [1] },
-      { id: "physics-fri", name: "大学物理", code: "GEN1001", day: 5, startSection: 1, endSection: 2, weeks: [1] },
+      { id: "physics-tue", name: "大学物理", code: "PHY1006", day: 2, startSection: 1, endSection: 2, weeks: [1] },
+      { id: "physics-fri", name: "大学物理", code: "PHY1006", day: 5, startSection: 1, endSection: 2, weeks: [1] },
       { id: "chemistry", name: "化学原理I", code: "CHEM1001", day: 3, startSection: 3, endSection: 3, weeks: [1] },
       { id: "calculus", name: "微积分A（上）", code: "MATH1004", day: 1, startSection: 4, endSection: 5, weeks: [1] },
     ],
@@ -178,7 +178,12 @@ vm.runInContext(`
   const parsedPlan = parseProjectLines("2026-09-15 | 完成中期汇报\\n联系导师确认方案");
   const metrics = projectMetrics(projectPlan);
   const monthDates = monthGridDates(2026, 7);
-  globalThis.__planningResult = { parsedPlan, metrics, monthDates };
+  data.semester = { name: "跨学期导航", startDate: "2026-02-16", totalWeeks: 20, showWeekend: true };
+  scheduleMode = "week";
+  displayedWeek = 24;
+  const futureWeekTitle = calendarWeekTitle(displayedWeek, 10);
+  moveCalendar(1);
+  globalThis.__planningResult = { parsedPlan, metrics, monthDates, futureWeekTitle, displayedWeek };
 `, context);
 if (context.__planningResult.metrics.actual !== 50 || context.__planningResult.metrics.pending.length !== 1 || context.__planningResult.parsedPlan.length !== 2) {
   throw new Error("长期项目里程碑、多个行动或真实进度计算不正确");
@@ -186,6 +191,20 @@ if (context.__planningResult.metrics.actual !== 50 || context.__planningResult.m
 if (context.__planningResult.monthDates.length !== 42 || context.__planningResult.monthDates[0].getDay() !== 1) {
   throw new Error("统一月历没有生成从周一开始的完整六周网格");
 }
+if (!context.__planningResult.futureWeekTitle.includes("学期后第 4 周") || context.__planningResult.displayedWeek !== 25) throw new Error("周日历应能继续浏览学期结束后的普通日期");
+
+vm.runInContext(`
+  const generalWeekStart = weekStartDate(25);
+  const generalDate = localISO(addDays(generalWeekStart, 2));
+  data.tasks = [
+    { id: "general-event", title: "跨学期会议", type: "event", startDate: generalDate, startTime: "14:00", endDate: generalDate, endTime: "15:00", completed: false },
+    { id: "general-deadline", title: "跨学期资料", due: generalDate, dueTime: "18:00", completed: false },
+  ];
+  const generalWeek = weekCalendarModel(generalWeekStart);
+  globalThis.__generalWeek = { timed: generalWeek.timed.map((item) => ({ kind: item.kind, id: item.id, start: item.start })), generalDate };
+`, context);
+if (!context.__generalWeek.timed.some((item) => item.id === "general-event" && item.kind === "event" && item.start === 840)) throw new Error("通用周历未按真实时间显示学期外日程");
+if (!context.__generalWeek.timed.some((item) => item.id === "general-deadline" && item.kind === "deadline" && item.start === 1080)) throw new Error("通用周历未同时显示任务期限");
 
 vm.runInContext(`
   const flowToday = localISO();

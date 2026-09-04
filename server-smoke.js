@@ -4,6 +4,8 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
+const serverSource = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+assert.match(serverSource, /DROP TABLE IF EXISTS voice_commands;[\s\S]*DROP TABLE IF EXISTS voice_tokens;/, "服务器升级时应清除已停用功能遗留的令牌和命令记录");
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -33,7 +35,7 @@ async function main() {
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ["server.js"], {
     cwd: __dirname,
-    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", DATA_DIR: dataDirectory, FANGCUN_PASSWORD: "test-password-123", FANGCUN_VOICE_RATE_LIMIT: "3", NODE_NO_WARNINGS: "1" },
+    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", DATA_DIR: dataDirectory, FANGCUN_PASSWORD: "test-password-123", FANGCUN_OPERATOR_NAME: "测试运营者", FANGCUN_CONTACT: "support@example.test", FANGCUN_APP_BEIAN: "测试 APP 备案号", FANGCUN_ICP_BEIAN: "测试 ICP 备案号", NODE_NO_WARNINGS: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stderr = "";
@@ -51,6 +53,14 @@ async function main() {
     assert.match(mobileLayout.headers.get("content-type") || "", /text\/css/);
     const wordParser = await fetch(`${origin}/docx-schedule-parser.js?v=2.7.0`);
     assert.equal(wordParser.status, 200, "服务端必须提供 Word 课表解析模块");
+    const privacyPage = await fetch(`${origin}/privacy.html`);
+    const privacyText = await privacyPage.text();
+    assert.equal(privacyPage.status, 200, "服务端必须提供隐私政策");
+    assert.match(privacyText, /测试运营者/);
+    assert.doesNotMatch(privacyText, /\{\{[^}]+\}\}/, "隐私政策不得向用户暴露未替换占位符");
+    const indexPage = await fetch(`${origin}/`).then((response) => response.text());
+    assert.match(indexPage, /APP 备案号：测试 APP 备案号/);
+    assert.doesNotMatch(indexPage, /\{\{APP_BEIAN\}\}/, "应用内不得暴露备案占位符");
 
     const failedLogin = await fetch(`${origin}/api/auth/login`, {
       method: "POST",
@@ -99,37 +109,10 @@ async function main() {
     assert.equal(forcedSave.status, 200);
     assert.equal((await forcedSave.json()).revision, 2);
 
-    const unauthenticatedVoice = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "明天下午三点交材料" }) });
-    assert.equal(unauthenticatedVoice.status, 401, "语音接口必须鉴权");
-    const voiceToken = await fetch(`${origin}/api/voice/token`, { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: "{}" }).then((response) => response.json());
-    assert.match(voiceToken.token, /^[A-Za-z0-9_-]{40,}$/);
-    const sessionVoice = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ text: "明天下午三点交物理作业，重要紧急" }) });
-    assert.equal(sessionVoice.status, 201);
-    const sessionVoiceCommand = (await sessionVoice.json()).command;
-    assert.match(sessionVoiceCommand.summary, /已创建事项/);
-    const voiceData = await fetch(`${origin}/api/data`, { headers: authHeaders }).then((response) => response.json());
-    const voiceTask = voiceData.data.tasks.find((task) => task.voiceCommandId === sessionVoiceCommand.id);
-    assert.ok(voiceTask, "语音解析结果必须写入用户数据");
-    assert.equal(voiceTask.source, "voice");
-    assert.equal(voiceTask.important, true);
-    assert.equal(voiceTask.urgent, true);
-    const tokenVoice = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { Authorization: `Bearer ${voiceToken.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text: "后天上午九点提醒我提交周报" }) });
-    assert.equal(tokenVoice.status, 201, "专用语音令牌应可鉴权");
-    const thirdVoice = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { Authorization: `Bearer ${voiceToken.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text: "记录第三条待办" }) });
-    assert.equal(thirdVoice.status, 201);
-    const rateLimitedVoice = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { Authorization: `Bearer ${voiceToken.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text: "记录第四条待办" }) });
-    assert.equal(rateLimitedVoice.status, 429, "语音写入接口必须限制请求频率");
-    const history = await fetch(`${origin}/api/voice/commands`, { headers: authHeaders }).then((response) => response.json());
-    assert.equal(history.commands.length, 3);
-    assert.equal(history.commands[0].status, "created");
-    const undoVoice = await fetch(`${origin}/api/voice/commands/${encodeURIComponent(sessionVoiceCommand.id)}/undo`, { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: "{}" });
-    assert.equal(undoVoice.status, 200);
-    const afterUndo = await fetch(`${origin}/api/data`, { headers: authHeaders }).then((response) => response.json());
-    assert.equal(afterUndo.data.tasks.some((task) => task.id === voiceTask.id), false, "撤销必须删除对应语音创建项");
-    const rotatedVoiceToken = await fetch(`${origin}/api/voice/token`, { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: "{}" }).then((response) => response.json());
-    assert.notEqual(rotatedVoiceToken.token, voiceToken.token);
-    const expiredVoiceToken = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { Authorization: `Bearer ${voiceToken.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text: "记录待办" }) });
-    assert.equal(expiredVoiceToken.status, 401, "重置后旧语音令牌必须立即失效");
+    const retiredVoiceCommand = await fetch(`${origin}/api/voice/command`, { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ text: "记录待办" }) });
+    assert.equal(retiredVoiceCommand.status, 404, "停用小爱后服务端不得继续暴露语音写入接口");
+    const retiredVoiceToken = await fetch(`${origin}/api/voice/token`, { headers: authHeaders });
+    assert.equal(retiredVoiceToken.status, 404, "停用小爱后服务端不得继续暴露语音令牌接口");
 
     const openRegistration = await fetch(`${origin}/api/admin/registration`, {
       method: "PUT",
@@ -152,35 +135,35 @@ async function main() {
     assert.equal(migration.status, 200);
     const invalidatedMemberSession = await fetch(`${origin}/api/data`, { headers: { Cookie: memberCookie, Origin: origin } });
     assert.equal(invalidatedMemberSession.status, 401);
-    const xueLogin = await fetch(`${origin}/api/auth/login`, {
+    const memberLogin = await fetch(`${origin}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: origin },
       body: JSON.stringify({ username: "member", password: "memberPass8" }),
     });
-    assert.equal(xueLogin.status, 200);
-    const xueAuthHeaders = { Cookie: xueLogin.headers.get("set-cookie").split(";")[0], Origin: origin };
-    const migratedData = await fetch(`${origin}/api/data`, { headers: xueAuthHeaders }).then((response) => response.json());
+    assert.equal(memberLogin.status, 200);
+    const memberAuthHeaders = { Cookie: memberLogin.headers.get("set-cookie").split(";")[0], Origin: origin };
+    const migratedData = await fetch(`${origin}/api/data`, { headers: memberAuthHeaders }).then((response) => response.json());
     assert.ok(migratedData.data.tasks.some((task) => task.title === "迁移验证任务"), "迁移后的数据必须保留原任务");
-    const outlookStatus = await fetch(`${origin}/api/integrations/outlook/status`, { headers: xueAuthHeaders }).then((response) => response.json());
+    const outlookStatus = await fetch(`${origin}/api/integrations/outlook/status`, { headers: memberAuthHeaders }).then((response) => response.json());
     assert.equal(outlookStatus.configured, false);
     assert.equal(outlookStatus.connected, false);
-    const unavailableOutlook = await fetch(`${origin}/api/integrations/outlook/connect`, { method: "POST", headers: { ...xueAuthHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ source: "web" }) });
+    const unavailableOutlook = await fetch(`${origin}/api/integrations/outlook/connect`, { method: "POST", headers: { ...memberAuthHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ source: "web" }) });
     assert.equal(unavailableOutlook.status, 503, "未配置 Microsoft 凭据时不能伪装为已经可连接");
-    const googleStatus = await fetch(`${origin}/api/integrations/google/status`, { headers: xueAuthHeaders }).then((response) => response.json());
+    const googleStatus = await fetch(`${origin}/api/integrations/google/status`, { headers: memberAuthHeaders }).then((response) => response.json());
     assert.equal(googleStatus.configured, false);
     assert.equal(googleStatus.connected, false);
-    const unavailableGoogle = await fetch(`${origin}/api/integrations/google/connect`, { method: "POST", headers: { ...xueAuthHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ source: "web" }) });
+    const unavailableGoogle = await fetch(`${origin}/api/integrations/google/connect`, { method: "POST", headers: { ...memberAuthHeaders, "Content-Type": "application/json" }, body: JSON.stringify({ source: "web" }) });
     assert.equal(unavailableGoogle.status, 503, "未配置 Google 凭据时不能伪装为已经可连接");
-    const calendarSubscription = await fetch(`${origin}/api/calendar/subscription`, { method: "POST", headers: { ...xueAuthHeaders, "Content-Type": "application/json" }, body: "{}" }).then((response) => response.json());
+    const calendarSubscription = await fetch(`${origin}/api/calendar/subscription`, { method: "POST", headers: { ...memberAuthHeaders, "Content-Type": "application/json" }, body: "{}" }).then((response) => response.json());
     assert.match(calendarSubscription.url, /^http:\/\/127\.0\.0\.1:\d+\/calendar\/[A-Za-z0-9_-]+\.ics$/);
     const calendarFeed = await fetch(calendarSubscription.url);
     assert.equal(calendarFeed.status, 200);
     assert.match(calendarFeed.headers.get("content-type") || "", /text\/calendar/);
     assert.match(await calendarFeed.text(), /迁移验证任务/);
-    const rotatedCalendar = await fetch(`${origin}/api/calendar/subscription`, { method: "POST", headers: { ...xueAuthHeaders, "Content-Type": "application/json" }, body: "{}" }).then((response) => response.json());
+    const rotatedCalendar = await fetch(`${origin}/api/calendar/subscription`, { method: "POST", headers: { ...memberAuthHeaders, "Content-Type": "application/json" }, body: "{}" }).then((response) => response.json());
     assert.equal((await fetch(calendarSubscription.url)).status, 404, "重新生成后旧日历链接必须立即失效");
     assert.equal((await fetch(rotatedCalendar.url)).status, 200);
-    const revokedCalendar = await fetch(`${origin}/api/calendar/subscription`, { method: "DELETE", headers: xueAuthHeaders });
+    const revokedCalendar = await fetch(`${origin}/api/calendar/subscription`, { method: "DELETE", headers: memberAuthHeaders });
     assert.equal(revokedCalendar.status, 200);
     assert.equal((await fetch(rotatedCalendar.url)).status, 404, "撤销后日历链接必须失效");
     const usersBeforeReset = await fetch(`${origin}/api/admin/users`, { headers: authHeaders }).then((response) => response.json());
@@ -228,6 +211,19 @@ async function main() {
     });
     assert.equal(deletedLogin.status, 401);
 
+    const selfRegister = await fetch(`${origin}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ username: "member_self", displayName: "注销测试", password: "self-delete-password" }),
+    });
+    assert.equal(selfRegister.status, 201);
+    const selfHeaders = { Cookie: selfRegister.headers.get("set-cookie").split(";")[0], Origin: origin, "Content-Type": "application/json" };
+    const wrongSelfDelete = await fetch(`${origin}/api/auth/account`, { method: "DELETE", headers: selfHeaders, body: JSON.stringify({ password: "wrong-password" }) });
+    assert.equal(wrongSelfDelete.status, 401, "账号注销必须校验当前密码");
+    const selfDelete = await fetch(`${origin}/api/auth/account`, { method: "DELETE", headers: selfHeaders, body: JSON.stringify({ password: "self-delete-password" }) });
+    assert.equal(selfDelete.status, 200, "普通用户必须可以在应用内注销账号");
+    assert.equal((await fetch(`${origin}/api/data`, { headers: selfHeaders })).status, 401, "账号注销后当前会话必须失效");
+
     const passwordChange = await fetch(`${origin}/api/auth/password`, {
       method: "POST",
       headers: { ...authHeaders, "Content-Type": "application/json" },
@@ -249,7 +245,7 @@ async function main() {
 
     const privateFile = await fetch(`${origin}/data/fangcun.sqlite`);
     assert.equal(privateFile.status, 404);
-    console.log("服务端检查通过：语音鉴权、解析、落库、日志、撤销，以及账号、会话和同步保护均正常。");
+    console.log("服务端检查通过：账号、会话、同步保护正常，且已停用的语音接口不可访问。");
   } finally {
     child.kill("SIGTERM");
     await new Promise((resolve) => child.once("exit", resolve));

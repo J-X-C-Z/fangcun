@@ -56,6 +56,17 @@
     if (/后天/.test(source)) return localISO(addDays(now, 2));
     if (/明天|明早|明晚/.test(source)) return localISO(addDays(now, 1));
     if (/今天|今晚|今早/.test(source)) return localISO(now);
+    if (/下周末/.test(source)) {
+      const current = now.getDay() || 7;
+      return localISO(addDays(now, 13 - current));
+    }
+    if (/(?:本周|这周)?周末/.test(source)) {
+      const current = now.getDay() || 7;
+      return localISO(addDays(now, 6 - current));
+    }
+    if (/月底|月末/.test(source)) return localISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+    const nextMonthDay = source.match(/下个月\s*([\d一二三四五六七八九十两]{1,3})[日号]/);
+    if (nextMonthDay) return localISO(new Date(now.getFullYear(), now.getMonth() + 1, toNumber(nextMonthDay[1])));
     const iso = source.match(/\b(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?\b/);
     if (iso) return `${iso[1]}-${pad(iso[2])}-${pad(iso[3])}`;
     const monthDay = source.match(/(?:今年)?([\d一二三四五六七八九十两]{1,3})月([\d一二三四五六七八九十两]{1,3})[日号]?/);
@@ -64,6 +75,13 @@
       const day = toNumber(monthDay[2]);
       let date = new Date(now.getFullYear(), month - 1, day);
       if (date < new Date(now.getFullYear(), now.getMonth(), now.getDate()) && !/今年/.test(source)) date = new Date(now.getFullYear() + 1, month - 1, day);
+      return localISO(date);
+    }
+    const bareDay = source.match(/(?:^|[^月\d])([\d一二三四五六七八九十两]{1,3})[日号](?:[^\d]|$)/);
+    if (bareDay) {
+      const day = toNumber(bareDay[1]);
+      let date = new Date(now.getFullYear(), now.getMonth(), day);
+      if (date < new Date(now.getFullYear(), now.getMonth(), now.getDate())) date = new Date(now.getFullYear(), now.getMonth() + 1, day);
       return localISO(date);
     }
     const weekday = source.match(/(下下周|下周|这周|本周)?(?:星期|周)([一二三四五六日天])/);
@@ -127,20 +145,21 @@
   }
 
   function parseEstimate(text) {
-    const match = String(text).match(/(?:预计|估计|大概|约|需要)\s*([\d一二三四五六七八九十两]{1,3})\s*(分钟|分|小时|钟头)/);
+    const match = String(text).match(/(?:预计|估计|大概|约|需要|持续)?\s*([\d一二三四五六七八九十两]{1,3})\s*(分钟|分|小时|钟头)/);
     if (!match) return 0;
     return toNumber(match[1]) * (/小时|钟头/.test(match[2]) ? 60 : 1);
   }
 
   function cleanTitle(text) {
     return String(text)
+      .replace(/^(?:请)?(?:帮我)?(?:提醒我|记得|安排一下|安排|添加|新建|创建|记录|我要|我需要)\s*/g, " ")
       .replace(/(?:今天|明天|后天|大后天|今晚|明早|明晚|下下周|下周|这周|本周)?(?:星期|周)[一二三四五六日天]/g, " ")
       .replace(/(?:今天|明天|后天|大后天|今晚|明早|明晚|今早)/g, " ")
       .replace(/(?:20\d{2}[-/.年])?[\d一二三四五六七八九十两]{1,3}[-/.月][\d一二三四五六七八九十两]{1,3}日?/g, " ")
       .replace(/(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*[\d一二三四五六七八九十两]{1,3}(?::\d{2}|[点时](?:半|一刻|三刻|[\d一二三四五六七八九十两]{1,3}分?)?)/g, " ")
       .replace(/\s*(?:到|至|—|–|~|～)\s*/g, " ")
       .replace(/提前\s*[\d一二三四五六七八九十两]{1,3}\s*(?:分钟|分|小时|钟头|天)(?:提醒)?|(?:到时候|届时|准时)提醒/g, " ")
-      .replace(/(?:预计|估计|大概|约|需要)\s*[\d一二三四五六七八九十两]{1,3}\s*(?:分钟|分|小时|钟头)/g, " ")
+      .replace(/(?:预计|估计|大概|约|需要|持续)?\s*[\d一二三四五六七八九十两]{1,3}\s*(?:分钟|分|小时|钟头)/g, " ")
       .replace(/(?:非常)?重要(?:且|和|、)?(?:非常)?紧急|重要不紧急|紧急不重要|不重要不紧急/g, " ")
       .replace(/(?:放到|加入|归入)(?:第一|第二|第三|第四|1|2|3|4)?象限/g, " ")
       .replace(/[,，。；;]+/g, " ")
@@ -162,8 +181,23 @@
   }
 
   function findContextMatches(text, items) {
-    const source = String(text).toLowerCase();
-    return (items || []).filter((item) => item?.name && source.includes(String(item.name).toLowerCase())).sort((a, b) => b.name.length - a.name.length);
+    const normalize = (value) => String(value || "").normalize("NFKC").toLowerCase().replace(/[\s·（）()《》\-_，,。:：]/g, "").replace(/(?:大学|课程|上|下)$/g, "");
+    const source = normalize(text);
+    return (items || []).filter((item) => {
+      const name = normalize(item?.name);
+      if (!name || name.length < 2) return false;
+      if (source.includes(name)) return true;
+      const aliases = [name.replace(/^大学/, ""), name.replace(/^大学/, "").replace(/[a-z]+\d*$/i, ""), name.replace(/[a-z]+\d*$/i, "")];
+      return aliases.some((alias) => alias.length >= 2 && source.includes(alias));
+    }).sort((a, b) => normalize(b.name).length - normalize(a.name).length);
+  }
+
+  function parseLocation(text) {
+    const source = String(text);
+    const explicit = source.match(/(?:地点|地址|位置)[:：]\s*([^，,。；;]+)/);
+    if (explicit) return explicit[1].trim();
+    const natural = source.match(/在\s*([^，,。；;]{2,30}?)(?=\s*(?:开会|见面|讨论|上课|参加|聚餐|就诊|体检|面试|汇报|训练|考试))/);
+    return natural?.[1]?.trim() || "";
   }
 
   function taskDecision(text, due, now) {
@@ -246,7 +280,8 @@
     else if (/每个?工作日|周一至周五/.test(text)) repeat = "weekdays";
     else if (/每周/.test(text)) repeat = "weekly";
     else if (/每月/.test(text)) repeat = "monthly";
-    const type = /考试|测验/.test(text) ? "exam" : /作业|报告/.test(text) ? "assignment" : /复习/.test(text) ? "review" : /会议|组会|约会|日程|上课/.test(text) || range.startTime ? "event" : "task";
+    const eventLike = /会议|组会|开会|见面|讨论|约会|日程|上课|参加|聚餐|就诊|体检|面试|拜访|预约|汇报|训练/.test(text) || Boolean(range.startTime);
+    const type = /考试|测验/.test(text) ? "exam" : /作业|报告/.test(text) ? "assignment" : /复习/.test(text) ? "review" : eventLike ? "event" : "task";
     if (decision.important === null && (type === "event" || projectMatches.length || courseMatches.length)) decision.important = true;
     if (decision.important === null) decision.important = false;
     if (decision.urgent === null) decision.urgent = false;
@@ -255,18 +290,41 @@
     if (!due && (range.startTime || parsedTime) && /今天|明天|后天|大后天/.test(text) === false) issues.push({ field: range.startTime ? "startDate" : "due", message: "识别到了时间，但没有明确日期" });
     if (courseMatches.length > 1) issues.push({ field: "courseId", message: "匹配到多门课程，请选择关联课程" });
     if (projectMatches.length > 1) issues.push({ field: "projectId", message: "匹配到多个项目，请选择关联项目" });
-    const dueTime = range.startTime && !deadlineLike ? "" : parsedTime;
-    const title = cleanTitle(text) || text.trim();
+    let eventStartDate = range.startDate;
+    let eventStartTime = range.startTime;
+    let eventEndDate = range.endDate;
+    let eventEndTime = range.endTime;
+    let taskDue = due;
+    let dueTime = parsedTime;
+    const estimateMinutes = parseEstimate(text);
+    if (type === "event" && !deadlineLike) {
+      eventStartDate = eventStartDate || due;
+      eventStartTime = eventStartTime || parsedTime;
+      taskDue = "";
+      dueTime = "";
+      if (eventStartTime && !eventEndTime) {
+        const startMinutes = Number(eventStartTime.slice(0, 2)) * 60 + Number(eventStartTime.slice(3));
+        const endMinutes = startMinutes + (estimateMinutes || 60);
+        eventEndDate = eventStartDate;
+        eventEndTime = `${pad(Math.floor((endMinutes % 1440) / 60))}:${pad(endMinutes % 60)}`;
+        if (endMinutes >= 1440 && eventStartDate) eventEndDate = localISO(addDays(new Date(`${eventStartDate}T12:00:00`), 1));
+      }
+    }
+    if (type === "event" && /(?:上午|中午|下午|傍晚|晚上|今晚|明早|明晚)/.test(text) && !parsedTime) issues.push({ field: "startTime", message: "识别到大致时段，请确认具体时间" });
+    const location = parseLocation(text);
+    let title = cleanTitle(text).replace(/(?:地点|地址|位置)[:：]\s*[^，,。；;]+/g, " ");
+    if (location) title = title.replace(new RegExp(`在\\s*${location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), " ");
+    title = title.replace(/\s+/g, " ").trim() || text.trim();
     return {
-      kind: "task", title, notes: "", due, dueTime, repeat, type,
-      startDate: range.startDate, startTime: range.startTime,
-      endDate: range.endDate, endTime: range.endTime,
+      kind: "task", title, notes: "", due: taskDue, dueTime, repeat, type,
+      startDate: eventStartDate, startTime: eventStartTime,
+      endDate: eventEndDate, endTime: eventEndTime, location,
       projectId: projectMatches.length === 1 ? projectMatches[0].id : "",
       courseId: courseMatches.length === 1 ? courseMatches[0].id : "",
       projectCandidates: projectMatches.map((item) => ({ id: item.id, name: item.name })),
       courseCandidates: courseMatches.map((item) => ({ id: item.id, name: item.name })),
       reminderMinutes: parseReminder(text),
-      estimateMinutes: parseEstimate(text),
+      estimateMinutes,
       important: decision.important, urgent: decision.urgent,
       today: due === localISO(context.now), issues, confidence: issues.length ? "needs-confirmation" : "high",
     };

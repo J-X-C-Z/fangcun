@@ -29,6 +29,21 @@ assert.equal(meeting.important, true);
 assert.equal(meeting.urgent, false);
 assert.equal(meeting.reminderMinutes, 30);
 
+const singleTimeEvent = parseNaturalInput("提醒我明天下午三点在图书馆开会一小时，提前十分钟提醒", context);
+assert.equal(singleTimeEvent.type, "event");
+assert.equal(singleTimeEvent.startDate, "2026-08-26");
+assert.equal(singleTimeEvent.startTime, "15:00");
+assert.equal(singleTimeEvent.endTime, "16:00");
+assert.equal(singleTimeEvent.location, "图书馆");
+assert.equal(singleTimeEvent.title, "开会");
+
+const fuzzyCourse = parseNaturalInput("明晚九点交物理作业", { ...context, courses: [{ id: "physics-a", name: "大学物理A（上）" }] });
+assert.equal(fuzzyCourse.courseId, "physics-a");
+assert.equal(fuzzyCourse.dueTime, "21:00");
+
+assert.equal(parseNaturalInput("下周末整理房间", context).due, "2026-09-05");
+assert.equal(parseNaturalInput("月底提交月报", context).due, "2026-08-31");
+
 const course = parseNaturalInput("每周二第1-2节 大学物理 1-17周 湖畔校区B12-201 提前10分钟", context);
 assert.equal(course.kind, "course");
 assert.equal(course.day, 2);

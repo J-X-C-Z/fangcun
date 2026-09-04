@@ -19,4 +19,17 @@ ss -lnt | grep '127\.0\.0\.1:18443'
 echo "[4/4] 最近服务日志"
 journalctl -u fangcun.service -n 20 --no-pager
 
+if grep -q '^FANGCUN_STORE_RELEASE=true$' /etc/fangcun.env 2>/dev/null; then
+  echo "[store] 隐私政策与备案公开信息"
+  for variable in FANGCUN_OPERATOR_NAME FANGCUN_CONTACT FANGCUN_APP_BEIAN FANGCUN_ICP_BEIAN; do
+    grep -Eq "^${variable}=.+" /etc/fangcun.env || { echo "缺少商店发布配置：${variable}" >&2; exit 1; }
+  done
+  PRIVACY_RESPONSE=$(curl --fail --silent --show-error http://127.0.0.1:18443/privacy.html)
+  printf '%s' "$PRIVACY_RESPONSE" | grep -q '方寸隐私政策'
+  if printf '%s' "$PRIVACY_RESPONSE" | grep -q '发布前待配置'; then
+    echo "隐私政策仍含发布占位内容。" >&2
+    exit 1
+  fi
+fi
+
 echo "验收通过：方寸仅监听服务器本机 127.0.0.1:18443。"

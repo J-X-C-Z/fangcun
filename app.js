@@ -5,6 +5,7 @@ const THEME_KEY = "fangcun-theme";
 const SYNC_META_KEY = "fangcun-sync-v1";
 const PRE_CLOUD_BACKUP_KEY = "fangcun-pre-cloud-backup";
 const CALENDAR_SUBSCRIPTION_URL_KEY = "fangcun-calendar-subscription-url";
+const TEST_REMINDER_KEY = "fangcun-test-reminder";
 const COURSE_PALETTE = ["#4F6BED", "#0FA77A", "#F59E0B", "#EF5B5B", "#8B5CF6", "#0891B2", "#F97316", "#EC4899"];
 const LEGACY_COURSE_COLORS = { "#52778e": "#4F6BED", "#4d7661": "#0FA77A", "#b67a34": "#F59E0B", "#ad646e": "#EF5B5B", "#756493": "#8B5CF6", "#3f8587": "#0891B2", "#9a6b4f": "#F97316", "#61728f": "#EC4899" };
 
@@ -122,7 +123,7 @@ const projectColors = {
   rose: "#ad646e",
 };
 
-const taskTypeLabels = { task: "任务", assignment: "作业", exam: "考试", review: "复习" };
+const taskTypeLabels = { task: "任务", event: "日程", assignment: "作业", exam: "考试", review: "复习" };
 const repeatLabels = { daily: "每天", weekdays: "工作日", weekly: "每周", monthly: "每月" };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -459,6 +460,7 @@ function renderCloudPanel() {
     ? "检测到版本冲突，自动同步已暂停。"
     : `${formatSyncTime(syncState.updatedAt)} · 数据版本 ${syncState.revision} · 方寸 ${syncState.serverVersion || APP_VERSION}`;
   $("#appVersionInfo").textContent = `方寸 v${APP_VERSION} · ${APP_BUILD}${syncState.serverVersion && syncState.serverVersion !== APP_VERSION ? ` · 服务端 v${syncState.serverVersion}` : ""}`;
+  $("#deleteAccountSection").classList.toggle("hidden", syncState.user?.role !== "user");
   $("#restoreLocalBtn").disabled = !localStorage.getItem(accountKey(PRE_CLOUD_BACKUP_KEY));
 }
 
@@ -477,59 +479,6 @@ async function apiRequest(pathname, options = {}) {
   }
   return payload;
 }
-
-function renderVoiceCommands(commands) {
-  const list = $("#voiceCommandList");
-  if (!list) return;
-  list.innerHTML = commands.length ? commands.map((command) => `<article class="voice-command-item ${command.status}"><div><strong>${escapeHTML(command.text)}</strong><span>${escapeHTML(command.summary)} · ${new Date(command.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>${command.status === "created" ? `<button type="button" class="text-button" data-undo-voice-command="${escapeHTML(command.id)}">撤销</button>` : "<em>已撤销</em>"}</article>`).join("") : '<div class="empty-state">尚无语音命令记录</div>';
-}
-
-async function loadVoiceAssistant() {
-  if (!syncState.authenticated) return;
-  try {
-    const [token, history] = await Promise.all([apiRequest("/api/voice/token"), apiRequest("/api/voice/commands")]);
-    const status = $("#voiceTokenStatus");
-    status.textContent = token.enabled ? `令牌已启用${token.lastAccessAt ? ` · 最近使用 ${formatSyncTime(token.lastAccessAt).replace("最近同步 ", "")}` : ""}` : "尚未生成语音令牌";
-    status.dataset.enabled = String(token.enabled);
-    $("#generateVoiceTokenBtn").textContent = token.enabled ? "重置令牌" : "生成令牌";
-    renderVoiceCommands(history.commands || []);
-  } catch (error) { $("#voiceTokenStatus").textContent = `加载失败：${error.message}`; }
-}
-
-async function generateVoiceToken() {
-  if ($("#voiceTokenStatus").dataset.enabled === "true" && !confirm("重置后旧语音令牌会立即失效，是否继续？")) return;
-  try {
-    const result = await apiRequest("/api/voice/token", { method: "POST", body: "{}" });
-    $("#voiceTokenValue").value = result.token;
-    $("#voiceTokenValueRow").classList.remove("hidden");
-    showToast("新语音令牌已生成，请立即保存");
-    loadVoiceAssistant();
-  } catch (error) { showToast(error.message); }
-}
-
-async function copyVoiceToken() {
-  const input = $("#voiceTokenValue");
-  if (!input.value) return;
-  try { await navigator.clipboard.writeText(input.value); }
-  catch { input.select(); document.execCommand("copy"); }
-  showToast("语音令牌已复制");
-}
-
-async function undoVoiceCommand(commandId) {
-  if (!confirm("撤销会删除这条语音命令创建的内容，是否继续？")) return;
-  try {
-    await apiRequest(`/api/voice/commands/${encodeURIComponent(commandId)}/undo`, { method: "POST", body: "{}" });
-    applyCloudData(await fetchCloudState());
-    await loadVoiceAssistant();
-    showToast("语音命令已撤销");
-  } catch (error) { showToast(error.message); }
-}
-
-window.FangcunVoiceCommandCreated = async () => {
-  if (!syncState.authenticated) return;
-  try { applyCloudData(await fetchCloudState()); await loadVoiceAssistant(); }
-  catch (error) { console.warn("无法刷新语音命令结果", error); }
-};
 
 function scheduleCloudSync() {
   if (!syncState.authenticated || syncState.conflict || syncState.applyingRemote) return;
@@ -650,7 +599,7 @@ function switchAccount(user) {
   if (previousId !== user.id) {
     if (user.role !== "admin") {
       data = loadData();
-      displayedWeek = Math.min(Math.max(currentSemesterWeek(), 1), data.semester.totalWeeks);
+      displayedWeek = currentSemesterWeek();
       renderAll();
       syncNativeReminders();
     }
@@ -731,6 +680,7 @@ async function initializeCloud() {
   if (typeof fetch !== "function" || typeof location === "undefined" || !location.protocol.startsWith("http")) {
     setCloudIndicator("", "仅本机");
     renderCloudPanel();
+    hideAuthGate();
     return;
   }
   try {
@@ -752,6 +702,7 @@ async function initializeCloud() {
     setCloudIndicator("error", "仅本机");
     $("#authServerStatus").className = "auth-server-status error";
     $("#authServerStatus span").textContent = "无法连接服务器，请检查网络后重试";
+    showAuthGate();
   }
   renderCloudPanel();
   if (syncState.available && !syncState.authenticated) showAuthGate();
@@ -1372,26 +1323,139 @@ function renderDeadlineRadar() {
   }).join("") : '<span class="deadline-empty">目前没有 DDL，可以安心安排深度工作。</span>');
 }
 
+async function deleteOwnAccount() {
+  if (syncState.user?.role !== "user") return showToast("管理员账号不能在应用内注销");
+  const password = $("#deleteAccountPassword").value;
+  if (!password) return showToast("请输入当前密码");
+  const username = syncState.user.username;
+  if (!confirm(`确定永久注销账号“${username}”吗？方寸服务器中的任务、课表、同步令牌和历史快照都会删除，且无法恢复。`)) return;
+  const button = $("#deleteAccountBtn");
+  button.disabled = true;
+  try {
+    await apiRequest("/api/auth/account", { method: "DELETE", body: JSON.stringify({ password }) });
+    [STORAGE_KEY, SYNC_META_KEY, PRE_CLOUD_BACKUP_KEY, CALENDAR_SUBSCRIPTION_URL_KEY, ANDROID_CALENDAR_MAP_KEY].forEach((key) => localStorage.removeItem(accountKey(key)));
+    localStorage.removeItem(LAST_USER_KEY);
+    currentUser = null;
+    syncState.authenticated = false;
+    syncState.user = null;
+    $("#deleteAccountPassword").value = "";
+    $("#cloudModal").close();
+    showAuthGate();
+    showToast("账号及方寸云端数据已永久删除");
+  } catch (error) {
+    showToast(error.message);
+  } finally { button.disabled = false; }
+}
+
+function calendarWeekTitle(week, currentWeek = currentSemesterWeek()) {
+  const totalWeeks = Number(data.semester.totalWeeks) || 20;
+  const label = week < 1 ? `学期前第 ${1 - week} 周` : week > totalWeeks ? `学期后第 ${week - totalWeeks} 周` : `第 ${week} 教学周`;
+  return `${label}${week === currentWeek ? " · 本周" : ""}`;
+}
+
+function timeMinutes(value, fallback = 0) {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{2})$/);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : fallback;
+}
+
+function minutesLabel(minutes) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function weekCalendarModel(start) {
+  const firstKey = localISO(start);
+  const lastKey = localISO(addDays(start, 6));
+  const inWeek = (value) => value && value >= firstKey && value <= lastKey;
+  const dayIndex = (value) => Math.round((dateFromISO(value) - dateFromISO(firstKey)) / 86400000);
+  const timed = [];
+  const allDay = Array.from({ length: 7 }, () => []);
+
+  for (let day = 0; day < 7; day += 1) {
+    const date = addDays(start, day);
+    data.courses.map((course) => courseOccurrence(course, date)).filter(Boolean).forEach((course) => {
+      const startSlot = slotByNumber(course.startSection);
+      const endSlot = slotByNumber(course.endSection);
+      if (!startSlot || !endSlot) return;
+      timed.push({ kind: "course", id: course.id, day, start: timeMinutes(startSlot.startTime), end: timeMinutes(endSlot.endTime), title: course.name, detail: coursePlace(course), color: course.color });
+    });
+  }
+
+  data.tasks.filter((task) => !task.completed).forEach((task) => {
+    if (inWeek(task.startDate)) {
+      const day = dayIndex(task.startDate);
+      if (task.startTime) {
+        const startMinutes = timeMinutes(task.startTime);
+        const sameDayEnd = !task.endDate || task.endDate === task.startDate;
+        const inferredEnd = startMinutes + Math.max(30, Number(task.estimateMinutes) || 60);
+        const endMinutes = sameDayEnd && task.endTime ? timeMinutes(task.endTime, inferredEnd) : inferredEnd;
+        timed.push({ kind: "event", id: task.id, day, start: startMinutes, end: Math.max(startMinutes + 30, endMinutes), title: task.title, detail: task.location || taskTypeLabels[task.type] || "日程" });
+      } else allDay[day].push({ kind: "event", id: task.id, title: task.title });
+    }
+    if (inWeek(task.due) && (!task.startDate || task.due !== task.startDate)) {
+      const day = dayIndex(task.due);
+      if (task.dueTime) {
+        const startMinutes = timeMinutes(task.dueTime);
+        timed.push({ kind: "deadline", id: task.id, day, start: startMinutes, end: startMinutes + 30, title: task.title, detail: "截止" });
+      } else allDay[day].push({ kind: "deadline", id: task.id, title: task.title });
+    }
+  });
+  return { timed, allDay };
+}
+
+function renderWeekCalendar(start) {
+  const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  const { timed, allDay } = weekCalendarModel(start);
+  const startMinute = 7 * 60;
+  const endMinute = 23 * 60;
+  let html = '<div class="calendar-week-grid"><div class="calendar-week-corner">全天</div>';
+  for (let day = 0; day < 7; day += 1) {
+    const date = addDays(start, day);
+    const key = localISO(date);
+    html += `<button type="button" class="calendar-week-head ${key === localISO() ? "today" : ""}" data-calendar-date="${key}" style="grid-column:${day + 2};grid-row:1"><strong>${weekdays[day]}</strong><span>${date.getMonth() + 1}/${date.getDate()}</span></button>`;
+    html += `<div class="calendar-all-day" data-calendar-all-day="${key}" style="grid-column:${day + 2};grid-row:2">${allDay[day].slice(0, 3).map((item) => `<button type="button" class="calendar-all-day-item ${item.kind}" data-task-id="${item.id}">${escapeHTML(item.title)}</button>`).join("")}${allDay[day].length > 3 ? `<span>＋${allDay[day].length - 3}</span>` : ""}</div>`;
+  }
+  for (let minute = startMinute; minute < endMinute; minute += 30) {
+    const row = 3 + (minute - startMinute) / 30;
+    if (minute % 60 === 0) html += `<div class="calendar-hour" style="grid-column:1;grid-row:${row}/span 2">${minutesLabel(minute)}</div>`;
+    for (let day = 0; day < 7; day += 1) {
+      html += `<button type="button" class="calendar-time-cell" data-calendar-slot-date="${localISO(addDays(start, day))}" data-calendar-slot-time="${minutesLabel(minute)}" aria-label="${localISO(addDays(start, day))} ${minutesLabel(minute)} 新建日程" style="grid-column:${day + 2};grid-row:${row}"></button>`;
+    }
+  }
+  timed.forEach((item) => {
+    if (item.end <= startMinute || item.start >= endMinute) return;
+    const visibleStart = Math.max(startMinute, item.start);
+    const visibleEnd = Math.min(endMinute, item.end);
+    const row = 3 + Math.floor((visibleStart - startMinute) / 30);
+    const span = Math.max(1, Math.ceil((visibleEnd - visibleStart) / 30));
+    const attribute = item.kind === "course" ? `data-course-id="${item.id}"` : `data-task-id="${item.id}"`;
+    html += `<button type="button" class="calendar-week-event ${item.kind}" ${attribute} style="grid-column:${item.day + 2};grid-row:${row}/span ${span};${item.color ? `--event-color:${item.color};` : ""}"><time>${minutesLabel(item.start)}</time><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.detail || "")}</span></button>`;
+  });
+  html += "</div>";
+  $("#weekCalendar").innerHTML = html;
+}
+
 function renderSchedule() {
   $("#scheduleView").dataset.mode = scheduleMode;
-  displayedWeek = Math.min(Math.max(1, displayedWeek), Number(data.semester.totalWeeks) || 20);
   const start = weekStartDate(displayedWeek);
   const end = addDays(start, 6);
   const currentWeek = currentSemesterWeek();
   const dayCount = data.semester.showWeekend ? 7 : 5;
   const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-  $("#semesterSummary").textContent = `${data.semester.name} · ${data.semester.totalWeeks} 个教学周${currentWeek >= 1 && currentWeek <= data.semester.totalWeeks ? ` · 当前第 ${currentWeek} 周` : ""}`;
+  const datedTasks = data.tasks.filter((task) => !task.completed && (task.startDate || task.due)).length;
+  $("#semesterSummary").textContent = `${datedTasks} 个已排期事项 · ${data.courses.length} 门课程 · 可继续浏览学期外日期`;
   const titles = {
     year: [`${displayedYear} 年`, "全年课程、DDL 与校历"],
     month: [`${displayedYear} 年 ${displayedMonth + 1} 月`, "课程和截止事项统一月历"],
-    week: [`第 ${displayedWeek} 周${displayedWeek === currentWeek ? " · 本周" : ""}`, `${formatDate(localISO(start))} — ${formatDate(localISO(end))}`],
+    week: [`${formatDate(localISO(start))} — ${formatDate(localISO(end))}`, "按真实时间统一显示日程、任务、期限和课程"],
     day: [formatDate(displayedDay), "课程、日程与 DDL 时间线"],
+    timetable: [calendarWeekTitle(displayedWeek, currentWeek), `${formatDate(localISO(start))} — ${formatDate(localISO(end))} · 教学课表`],
   };
   $("#weekTitle").textContent = titles[scheduleMode]?.[0] || titles.week[0];
   $("#weekRange").textContent = titles[scheduleMode]?.[1] || titles.week[1];
-  $("#prevWeekBtn").disabled = scheduleMode === "week" && displayedWeek <= 1;
-  $("#nextWeekBtn").disabled = scheduleMode === "week" && displayedWeek >= data.semester.totalWeeks;
+  $("#prevWeekBtn").disabled = false;
+  $("#nextWeekBtn").disabled = false;
   renderDeadlineRadar();
+  renderWeekCalendar(start);
 
   const board = $("#scheduleBoard");
   board.style.setProperty("--day-count", dayCount);
@@ -1438,16 +1502,17 @@ function renderSchedule() {
     if (!courses.length) return "";
     return `<section class="agenda-day"><h3>${weekdays[day - 1]} · ${formatDate(localISO(date))}</h3>${courses.map((course) => `<article class="agenda-course" data-course-id="${course.id}" style="--course-color:${course.color}"><time>${escapeHTML(courseTimeText(course))}</time><i></i><div><strong>${escapeHTML(course.name)}</strong><span>${escapeHTML([course.code, course.teacher, coursePlace(course)].filter(Boolean).join(" · ") || "暂无详细信息")}</span></div><em>${formatWeeks(course.weeks)}周</em></article>`).join("")}</section>`;
   }).join("") || '<div class="empty-state" style="margin:20px">这一周没有课程。</div>';
-  renderSemesterOverview();
-  renderDaySchedule(mondayOf(dateFromISO(displayedDay)), 7);
-  renderYearCalendar();
-  renderMonthCalendar();
-  board.classList.toggle("hidden", scheduleMode !== "week");
+  if (scheduleMode === "day") renderDaySchedule(mondayOf(dateFromISO(displayedDay)), 7);
+  if (scheduleMode === "year") renderYearCalendar();
+  if (scheduleMode === "month") renderMonthCalendar();
+  board.classList.toggle("hidden", scheduleMode !== "timetable");
+  $("#weekCalendar").classList.toggle("hidden", scheduleMode !== "week");
   $("#yearCalendar").classList.toggle("hidden", scheduleMode !== "year");
   $("#monthCalendar").classList.toggle("hidden", scheduleMode !== "month");
   $("#semesterOverview").classList.add("hidden");
   $("#daySchedule").classList.toggle("hidden", scheduleMode !== "day");
   $("#courseAgenda").classList.add("hidden");
+  $("#weekDeadlines").classList.toggle("hidden", scheduleMode !== "timetable");
   $$("[data-schedule-mode]").forEach((button) => button.classList.toggle("active", button.dataset.scheduleMode === scheduleMode));
 }
 
@@ -1556,6 +1621,15 @@ function bindDynamicEvents() {
     showToast("今天先不推荐这件事");
   }));
   $$('[data-inbox-reparse]').forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); reparseInboxTask(button.dataset.inboxReparse); }));
+  $$('[data-calendar-slot-date]').forEach((button) => button.addEventListener("click", () => {
+    const start = button.dataset.calendarSlotTime;
+    const endMinutes = timeMinutes(start) + 60;
+    openTaskModal("", null, { type: "event", startDate: button.dataset.calendarSlotDate, startTime: start, endDate: button.dataset.calendarSlotDate, endTime: minutesLabel(endMinutes), reminderMinutes: 10 });
+  }));
+  $$('[data-calendar-all-day]').forEach((element) => element.addEventListener("click", (event) => {
+    if (event.target.closest('[data-task-id]')) return;
+    openTaskModal("", null, { type: "event", startDate: element.dataset.calendarAllDay });
+  }));
   $$("[data-day-date]").forEach((button) => button.addEventListener("click", () => { displayedDay = button.dataset.dayDate; scheduleMode = "day"; renderAll(); }));
   $$("[data-calendar-date]").forEach((element) => element.addEventListener("click", (event) => {
     if (event.target.closest("[data-task-id], [data-course-id]") || event.currentTarget !== element) return;
@@ -1563,7 +1637,7 @@ function bindDynamicEvents() {
     const selected = dateFromISO(displayedDay);
     displayedYear = selected.getFullYear();
     displayedMonth = selected.getMonth();
-    displayedWeek = Math.min(Math.max(currentSemesterWeek(selected), 1), data.semester.totalWeeks);
+    displayedWeek = currentSemesterWeek(selected);
     scheduleMode = "day";
     localStorage.setItem("fangcun-schedule-mode", scheduleMode);
     renderAll();
@@ -1647,7 +1721,7 @@ function renderAll() {
   renderQuadrants();
   renderInbox();
   renderToday();
-  renderSchedule();
+  if (activeView === "schedule") renderSchedule();
   renderProjects();
   renderCounts();
   renderDailyTip();
@@ -1665,6 +1739,7 @@ function showToast(message) {
 
 function switchView(view) {
   if (!viewInfo[view] || !$(`#${view}View`)) view = "today";
+  const enteringSchedule = view === "schedule" && activeView !== "schedule";
   activeView = view;
   document.body.dataset.activeView = view;
   $$(".view").forEach((element) => element.classList.remove("active"));
@@ -1677,6 +1752,7 @@ function switchView(view) {
   const activePanel = $(`#${view}View`);
   if (activePanel) activePanel.scrollTop = 0;
   if (typeof window.scrollTo === "function") window.scrollTo({ top: 0, behavior: "smooth" });
+  if (enteringSchedule) renderAll();
 }
 
 function selectMobileQuadrant(quadrant, scroll = true) {
@@ -1711,7 +1787,7 @@ function moveCalendar(direction) {
     displayedDay = localISO(shifted);
     displayedYear = shifted.getFullYear();
     displayedMonth = shifted.getMonth();
-    displayedWeek = Math.min(Math.max(currentSemesterWeek(shifted), 1), data.semester.totalWeeks);
+    displayedWeek = currentSemesterWeek(shifted);
   } else displayedWeek += direction;
   renderAll();
 }
@@ -1721,7 +1797,7 @@ function returnCalendarToToday() {
   displayedDay = localISO(now);
   displayedYear = now.getFullYear();
   displayedMonth = now.getMonth();
-  displayedWeek = Math.min(Math.max(currentSemesterWeek(now), 1), data.semester.totalWeeks);
+  displayedWeek = currentSemesterWeek(now);
   renderAll();
 }
 
@@ -1994,15 +2070,17 @@ function renderSmartCapturePreview() {
     const commonHeader = `<header><span>${labels[draft.kind] || "内容"}</span><em class="${issues.length ? "uncertain" : "resolved"}">${status}</em></header>`;
     if (draft.kind === "task") {
       const quadrant = classify(draft.important, draft.urgent) || "";
+      const isEvent = draft.type === "event";
+      const typeOptions = Object.entries(taskTypeLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
       return `<article class="smart-preview-card ${issues.length ? "has-issues" : ""}" data-smart-index="${index}">${commonHeader}<div class="smart-field-grid">
         <label class="smart-field wide"><span>事项</span><input data-smart-field="title" value="${escapeHTML(draft.title)}" /></label>
-        <label class="smart-field"><span>日期 / DDL</span><input type="date" data-smart-field="due" value="${escapeHTML(draft.due || "")}" /></label>
-        <label class="smart-field"><span>时间</span><input type="time" data-smart-field="dueTime" value="${escapeHTML(draft.dueTime || draft.startTime || "")}" /></label>
+        <label class="smart-field"><span>类型</span><select data-smart-field="type">${typeOptions}</select></label>
+        ${isEvent ? `<label class="smart-field"><span>开始日期</span><input type="date" data-smart-field="startDate" value="${escapeHTML(draft.startDate || "")}" /></label><label class="smart-field"><span>开始时间</span><input type="time" data-smart-field="startTime" value="${escapeHTML(draft.startTime || "")}" /></label><label class="smart-field"><span>结束时间</span><input type="time" data-smart-field="endTime" value="${escapeHTML(draft.endTime || "")}" /></label><label class="smart-field"><span>地点</span><input data-smart-field="location" value="${escapeHTML(draft.location || "")}" placeholder="教室、会议室或地址" /></label>` : `<label class="smart-field"><span>日期 / DDL</span><input type="date" data-smart-field="due" value="${escapeHTML(draft.due || "")}" /></label><label class="smart-field"><span>时间</span><input type="time" data-smart-field="dueTime" value="${escapeHTML(draft.dueTime || "")}" /></label>`}
         <label class="smart-field"><span>优先级</span><select data-smart-field="quadrant"><option value="">待确认</option>${quadrantOptions}</select></label>
         <label class="smart-field"><span>预计时长</span><input type="number" min="0" step="5" data-smart-field="estimateMinutes" value="${draft.estimateMinutes || ""}" placeholder="分钟" /></label>
         <label class="smart-field"><span>关联课程</span><select data-smart-field="courseId"><option value="">无课程</option>${courseOptions}</select></label>
         <label class="smart-field"><span>关联项目</span><select data-smart-field="projectId"><option value="">无项目</option>${projectOptions}</select></label>
-      </div><div class="smart-preview-meta">${smartDraftMeta(draft).map((item) => `<span>${escapeHTML(item)}</span>`).join("")}</div>${issues.length ? `<ul class="smart-issue-list">${issues.map((issue) => `<li>${escapeHTML(issue.message)}</li>`).join("")}</ul>` : ""}<script type="application/json" class="smart-selected-values">${JSON.stringify({ quadrant, courseId: draft.courseId || "", projectId: draft.projectId || "" }).replace(/</g, "\\u003c")}</script></article>`;
+      </div><div class="smart-preview-meta">${smartDraftMeta(draft).map((item) => `<span>${escapeHTML(item)}</span>`).join("")}</div>${issues.length ? `<ul class="smart-issue-list">${issues.map((issue) => `<li>${escapeHTML(issue.message)}</li>`).join("")}</ul>` : ""}<script type="application/json" class="smart-selected-values">${JSON.stringify({ type: draft.type || "task", quadrant, courseId: draft.courseId || "", projectId: draft.projectId || "" }).replace(/</g, "\\u003c")}</script></article>`;
     }
     if (draft.kind === "project") return `<article class="smart-preview-card ${issues.length ? "has-issues" : ""}" data-smart-index="${index}">${commonHeader}<div class="smart-field-grid"><label class="smart-field wide"><span>项目名称</span><input data-smart-field="name" value="${escapeHTML(draft.name)}" /></label><label class="smart-field"><span>目标日期</span><input type="date" data-smart-field="due" value="${escapeHTML(draft.due || "")}" /></label><label class="smart-field wide"><span>第一项行动</span><input data-smart-field="nextAction" value="${escapeHTML(draft.nextAction || "")}" placeholder="写成一个能直接开始的动作" /></label></div>${issues.length ? `<ul class="smart-issue-list">${issues.map((issue) => `<li>${escapeHTML(issue.message)}</li>`).join("")}</ul>` : ""}</article>`;
     return `<article class="smart-preview-card ${issues.length ? "has-issues" : ""}" data-smart-index="${index}">${commonHeader}<div class="smart-field-grid"><label class="smart-field wide"><span>课程名称</span><input data-smart-field="name" value="${escapeHTML(draft.name)}" /></label><label class="smart-field"><span>星期</span><select data-smart-field="day">${[1,2,3,4,5,6,7].map((day) => `<option value="${day}" ${day === draft.day ? "selected" : ""}>周${"一二三四五六日"[day - 1]}</option>`).join("")}</select></label><label class="smart-field"><span>开始节次</span><input type="number" min="1" data-smart-field="startSection" value="${draft.startSection}" /></label><label class="smart-field"><span>结束节次</span><input type="number" min="1" data-smart-field="endSection" value="${draft.endSection}" /></label></div><div class="smart-preview-meta">${smartDraftMeta(draft).map((item) => `<span>${escapeHTML(item)}</span>`).join("")}</div>${issues.length ? `<ul class="smart-issue-list">${issues.map((issue) => `<li>${escapeHTML(issue.message)}</li>`).join("")}</ul>` : ""}</article>`;
@@ -2032,6 +2110,10 @@ function updateSmartDraftField(event) {
   else draft[field] = control.value.trim();
   if (field === "title") draft.title = control.value.trim();
   if (field === "name") { draft.name = control.value.trim(); draft.title = draft.name; }
+  if (field === "type") {
+    if (draft.type === "event" && !draft.startDate && draft.due) { draft.startDate = draft.due; draft.startTime = draft.dueTime; draft.due = ""; draft.dueTime = ""; }
+    if (draft.type !== "event" && !draft.due && draft.startDate) { draft.due = draft.startDate; draft.dueTime = draft.startTime; }
+  }
   const issueField = ["startSection", "endSection"].includes(field) ? "section" : field;
   const resolved = field === "quadrant" ? Boolean(control.value) : Boolean(control.value);
   if (resolved) draft.issues = (draft.issues || []).filter((issue) => issue.field !== issueField);
@@ -2366,7 +2448,7 @@ function saveSemester(event) {
     course.endSection = Math.min(Math.max(course.endSection, course.startSection), data.timeSlots.length);
     course.weeks = course.weeks.filter((week) => week <= data.semester.totalWeeks);
   });
-  displayedWeek = Math.min(Math.max(currentSemesterWeek(), 1), data.semester.totalWeeks);
+  displayedWeek = currentSemesterWeek();
   $("#semesterModal").close();
   saveData();
   showToast("学期设置已保存");
@@ -2868,6 +2950,17 @@ function taskReminderDateTime(task) {
   return null;
 }
 
+function storedTestReminder() {
+  try {
+    return JSON.parse(localStorage.getItem(TEST_REMINDER_KEY) || "null");
+  } catch { return null; }
+}
+
+function pendingTestReminder() {
+  const item = storedTestReminder();
+  return item && Number(item.at) > Date.now() ? item : null;
+}
+
 function nativeReminderItems() {
   const now = new Date();
   const items = [];
@@ -2891,6 +2984,8 @@ function nativeReminderItems() {
       }
     });
   }
+  const testReminder = pendingTestReminder();
+  if (testReminder) items.push(testReminder);
   return items.sort((a, b) => a.at - b.at).slice(0, 240);
 }
 
@@ -3131,6 +3226,44 @@ window.FangcunNativeCalendarResume = async () => {
   scheduleNativeCalendarSync();
 };
 
+function updateReminderTestAvailability() {
+  const native = isNativeAndroid();
+  $("#testSystemAlarmBtn").classList.toggle("hidden", !native);
+  $("#systemAlarmTestHint").classList.toggle("hidden", native);
+}
+
+function openReminderSettings() {
+  updateReminderTestAvailability();
+  $("#sidebar").classList.remove("open");
+  $("#mobileMenu").setAttribute("aria-expanded", "false");
+  $("#remindersModal").showModal();
+}
+
+async function scheduleTestNotification() {
+  if (!isNativeAndroid()) {
+    if (!("Notification" in window)) return showToast("当前浏览器不支持系统通知");
+    const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+    if (permission !== "granted") return showToast("未获得通知权限，无法安排测试");
+  } else window.FangcunNative.requestReminderPermissions?.();
+  const at = Date.now() + 60000;
+  const triggerText = new Date(at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const item = { id: "fangcun-test-reminder", title: "方寸测试提醒", body: `计划触发时间 ${triggerText}`, at, systemAlarm: false };
+  // 固定存储键和原生提醒 id 会覆盖旧测试，因此同一分钟反复点击只保留最后一次，避免测试项爆量。
+  localStorage.setItem(TEST_REMINDER_KEY, JSON.stringify(item));
+  syncNativeReminders();
+  $("#reminderTestStatus").textContent = `测试提醒已安排，将在 ${triggerText} 触发。`;
+  showToast("已安排 1 分钟后的测试提醒");
+}
+
+function openTestSystemAlarm() {
+  if (!isNativeAndroid()) return showToast("请在方寸 Android App 中测试系统闹钟");
+  const nextHour = new Date();
+  nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+  const item = { id: "fangcun-test-system-alarm", title: "方寸测试闹钟", body: "请在系统时钟中确认保存", at: nextHour.getTime(), systemAlarm: true };
+  try { window.FangcunNative.syncReminders(JSON.stringify({ items: [...nativeReminderItems(), item] })); }
+  catch (error) { console.warn("无法打开系统闹钟测试", error); }
+}
+
 function updateNotificationStatus() {
   if (isNativeAndroid()) {
     $("#notificationStatus").textContent = "安卓系统提醒可在应用关闭后触发";
@@ -3174,6 +3307,11 @@ function checkReminders() {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const sent = JSON.parse(localStorage.getItem("fangcun-sent-reminders") || "{}");
   const now = new Date();
+  const testReminder = storedTestReminder();
+  if (testReminder && Number(testReminder.at) <= now.getTime()) {
+    showSystemNotification(testReminder.title, testReminder.body, testReminder.id);
+    localStorage.removeItem(TEST_REMINDER_KEY);
+  }
   data.courses.map((course) => courseOccurrence(course, now)).filter((course) => course && course.reminderMinutes >= 0 && !course.alarmMode).forEach((course) => {
     const slot = slotByNumber(course.startSection);
     if (!slot) return;
@@ -3271,9 +3409,11 @@ function initStaticEvents() {
   $("#projectForm").addEventListener("submit", saveProject);
   $("#deleteProjectBtn").addEventListener("click", deleteProject);
   $("#addCourseBtn").addEventListener("click", () => openCourseModal());
+  $("#addCalendarEventBtn").addEventListener("click", () => openTaskModal("", null, { type: "event", startDate: localISO(), reminderMinutes: 10 }));
   $$('[data-landscape-schedule-action]').forEach((button) => button.addEventListener("click", () => {
     const action = button.dataset.landscapeScheduleAction;
-    if (action === "add") openCourseModal();
+    if (action === "add") openTaskModal("", null, { type: "event", startDate: localISO(), reminderMinutes: 10 });
+    else if (action === "course") openCourseModal();
     else if (action === "import") $("#scheduleImportBtn").click();
     else if (action === "rules") $("#calendarRulesBtn").click();
     else if (action === "settings") $("#semesterSettingsBtn").click();
@@ -3358,12 +3498,12 @@ function initStaticEvents() {
   $("#nextWeekBtn").addEventListener("click", () => moveCalendar(1));
   $("#currentWeekBtn").addEventListener("click", returnCalendarToToday);
   $("#weekPickerBtn").addEventListener("click", () => {
-    if (scheduleMode !== "week") return;
-    const value = prompt(`跳转到第几周？（1-${data.semester.totalWeeks}）`, displayedWeek);
+    if (scheduleMode !== "week" && scheduleMode !== "timetable") return;
+    const value = prompt(`跳转到哪一周？教学周为 1-${data.semester.totalWeeks}，学期前可填 0、-1，学期后可继续填 ${data.semester.totalWeeks + 1}、${data.semester.totalWeeks + 2}…`, displayedWeek);
     if (value === null) return;
     const week = Number(value);
-    if (Number.isInteger(week) && week >= 1 && week <= data.semester.totalWeeks) { displayedWeek = week; renderAll(); }
-    else showToast("请输入有效的教学周");
+    if (Number.isInteger(week)) { displayedWeek = week; renderAll(); }
+    else showToast("请输入整数周次");
   });
   $$("[data-schedule-mode]").forEach((button) => button.addEventListener("click", () => { scheduleMode = button.dataset.scheduleMode; localStorage.setItem("fangcun-schedule-mode", scheduleMode); renderAll(); }));
   $$("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => $(`#${button.dataset.closeDialog}`).close()));
@@ -3396,7 +3536,10 @@ function initStaticEvents() {
   });
   $("#exportBtn").addEventListener("click", exportData);
   $("#importInput").addEventListener("change", importData);
-  $("#cloudBtn").addEventListener("click", () => { renderCloudPanel(); $("#cloudModal").showModal(); loadAdminPanel(); loadVoiceAssistant(); });
+  $("#reminderSettingsBtn").addEventListener("click", openReminderSettings);
+  $("#testNotificationBtn").addEventListener("click", scheduleTestNotification);
+  $("#testSystemAlarmBtn").addEventListener("click", openTestSystemAlarm);
+  $("#cloudBtn").addEventListener("click", () => { renderCloudPanel(); $("#cloudModal").showModal(); loadAdminPanel(); });
   $("#cloudAuthForm").addEventListener("submit", submitCloudAuth);
   $("#cloudRegisterBtn").addEventListener("click", () => { $("#cloudModal").close(); showAuthGate(); setAuthMode("register"); });
   $("#pullCloudBtn").addEventListener("click", pullCloudData);
@@ -3404,10 +3547,7 @@ function initStaticEvents() {
   $("#restoreLocalBtn").addEventListener("click", restorePreCloudData);
   $("#logoutCloudBtn").addEventListener("click", logoutCloud);
   $("#changeCloudPasswordBtn").addEventListener("click", changeCloudPassword);
-  $("#generateVoiceTokenBtn").addEventListener("click", generateVoiceToken);
-  $("#copyVoiceTokenBtn").addEventListener("click", copyVoiceToken);
-  $("#refreshVoiceCommandsBtn").addEventListener("click", loadVoiceAssistant);
-  $("#voiceCommandList").addEventListener("click", (event) => { const button = event.target.closest("[data-undo-voice-command]"); if (button) undoVoiceCommand(button.dataset.undoVoiceCommand); });
+  $("#deleteAccountBtn").addEventListener("click", deleteOwnAccount);
   $("#registrationToggle").addEventListener("change", toggleRegistration);
   $("#refreshAdminBtn").addEventListener("click", loadAdminPanel);
   $("#migrateOwnerDataBtn").addEventListener("click", migrateOwnerToMember);
@@ -3448,24 +3588,14 @@ function init() {
   if (localStorage.getItem(THEME_KEY) === "dark") document.body.classList.add("dark");
   const mobileLayout = mobileAppLayout();
   scheduleMode = localStorage.getItem("fangcun-schedule-mode") || (mobileLayout ? "day" : "month");
-  if (!["year", "month", "week", "day"].includes(scheduleMode)) scheduleMode = "month";
-  displayedWeek = Math.min(Math.max(currentSemesterWeek(), 1), data.semester.totalWeeks);
+  if (!["year", "month", "week", "day", "timetable"].includes(scheduleMode)) scheduleMode = "month";
+  displayedWeek = currentSemesterWeek();
   initStaticEvents();
   renderAll();
   selectMobileQuadrant(mobileQuadrant, false);
   syncNativeReminders();
   initializeCloud().then(handleCalendarReturn);
   updateSystemCalendarStatus();
-  if (typeof location !== "undefined" && typeof URLSearchParams !== "undefined") {
-    const voiceParams = new URLSearchParams(location.search || "");
-    if (voiceParams.get("quick") === "voice") setTimeout(() => {
-      const input = mobileAppLayout() ? $("#mobileCaptureInput") : $("#quickInput");
-      const proposedText = String(voiceParams.get("text") || "").trim();
-      if (input && proposedText) input.value = proposedText;
-      input?.focus();
-      if (typeof history !== "undefined") history.replaceState(null, "", `${location.pathname}${location.hash}`);
-    }, 120);
-  }
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     let refreshing = false;
     const offerUpdate = (worker) => {

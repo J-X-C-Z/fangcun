@@ -6,7 +6,6 @@ const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { OutlookIntegration } = require("./outlook-sync");
 const { GoogleIntegration } = require("./google-sync");
-const smartParser = require("./smart-parser");
 
 const APP_VERSION = "2.7.0";
 const port = Number(process.env.PORT || 4173);
@@ -17,8 +16,7 @@ const databasePath = path.join(dataDirectory, "fangcun.sqlite");
 const trustProxy = process.env.TRUST_PROXY === "true";
 const sessionMaxAge = 30 * 24 * 60 * 60;
 const maxBodyBytes = 2 * 1024 * 1024;
-const voiceCommandLimit = Math.min(Math.max(Number(process.env.FANGCUN_VOICE_RATE_LIMIT) || 30, 1), 120);
-const publicFiles = new Set(["index.html", "styles.css", "v22-layout.css", "smart-parser.js", "docx-schedule-parser.js", "app.js", "manifest.webmanifest", "icon.svg", "service-worker.js"]);
+const publicFiles = new Set(["index.html", "privacy.html", "styles.css", "v22-layout.css", "smart-parser.js", "docx-schedule-parser.js", "app.js", "manifest.webmanifest", "icon.svg", "service-worker.js"]);
 const types = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".svg": "image/svg+xml" };
 const attempts = new Map();
 
@@ -70,23 +68,8 @@ database.exec(`
     last_access_at TEXT
   );
   CREATE INDEX IF NOT EXISTS calendar_tokens_owner ON calendar_tokens(user_id);
-  CREATE TABLE IF NOT EXISTS voice_tokens (
-    token_hash TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    last_access_at TEXT
-  );
-  CREATE INDEX IF NOT EXISTS voice_tokens_owner ON voice_tokens(user_id);
-  CREATE TABLE IF NOT EXISTS voice_commands (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    original_text TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    result_json TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'created' CHECK (status IN ('created', 'undone'))
-  );
-  CREATE INDEX IF NOT EXISTS voice_commands_owner ON voice_commands(user_id, created_at DESC);
+  DROP TABLE IF EXISTS voice_commands;
+  DROP TABLE IF EXISTS voice_tokens;
 `);
 
 const statements = {
@@ -118,15 +101,6 @@ const statements = {
   deleteCalendarToken: database.prepare("DELETE FROM calendar_tokens WHERE user_id = ?"),
   getCalendarOwner: database.prepare("SELECT u.id, u.display_name, u.status, s.document, s.revision, s.updated_at FROM calendar_tokens c JOIN users u ON u.id = c.user_id LEFT JOIN user_states s ON s.user_id = u.id WHERE c.token_hash = ? AND u.status = 'active'"),
   touchCalendarToken: database.prepare("UPDATE calendar_tokens SET last_access_at = ? WHERE token_hash = ?"),
-  getVoiceTokenForUser: database.prepare("SELECT created_at AS createdAt, last_access_at AS lastAccessAt FROM voice_tokens WHERE user_id = ?"),
-  setVoiceToken: database.prepare("INSERT INTO voice_tokens (token_hash, user_id, created_at, last_access_at) VALUES (?, ?, ?, NULL) ON CONFLICT(user_id) DO UPDATE SET token_hash = excluded.token_hash, created_at = excluded.created_at, last_access_at = NULL"),
-  getVoiceOwner: database.prepare("SELECT u.* FROM voice_tokens v JOIN users u ON u.id = v.user_id WHERE v.token_hash = ? AND u.status = 'active'"),
-  touchVoiceToken: database.prepare("UPDATE voice_tokens SET last_access_at = ? WHERE token_hash = ?"),
-  addVoiceCommand: database.prepare("INSERT INTO voice_commands (id, user_id, created_at, original_text, summary, result_json, status) VALUES (?, ?, ?, ?, ?, ?, 'created')"),
-  listVoiceCommands: database.prepare("SELECT id, created_at AS createdAt, original_text AS text, summary, result_json AS resultJson, status FROM voice_commands WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
-  getVoiceCommand: database.prepare("SELECT id, user_id AS userId, created_at AS createdAt, original_text AS text, summary, result_json AS resultJson, status FROM voice_commands WHERE id = ? AND user_id = ?"),
-  markVoiceCommandUndone: database.prepare("UPDATE voice_commands SET status = 'undone' WHERE id = ? AND user_id = ?"),
-  pruneVoiceCommands: database.prepare("DELETE FROM voice_commands WHERE user_id = ? AND id NOT IN (SELECT id FROM voice_commands WHERE user_id = ? ORDER BY created_at DESC LIMIT 50)"),
   legacyState: database.prepare("SELECT document, revision, updated_at FROM state WHERE id = 1"),
   legacySnapshots: database.prepare("SELECT revision, document, created_at FROM snapshots ORDER BY id"),
 };
@@ -153,6 +127,7 @@ function validUsername(username) { return typeof username === "string" && /^[\p{
 function validPassword(password) { return typeof password === "string" && password.length >= 8 && password.length <= 128; }
 function validLoginPassword(password) { return typeof password === "string" && password.length > 0 && password.length <= 128; }
 function publicUser(user) { return user ? { id: user.id, username: user.username, displayName: user.display_name, role: user.role } : null; }
+function escapePublicText(value) { return String(value || "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
 
 function migrateLegacyOwner() {
   if (statements.userCount.get().count) return;
@@ -217,19 +192,6 @@ function sessionToken(request) { return parseCookies(request).fangcun_session ||
 function requestUser(request) {
   const token = sessionToken(request);
   return token ? statements.getSessionUser.get(hashToken(token), Date.now()) || null : null;
-}
-function voiceToken(request) {
-  const authorization = String(request.headers.authorization || "");
-  const bearer = authorization.match(/^Bearer\s+(.+)$/i);
-  return String(bearer?.[1] || request.headers["x-fangcun-voice-token"] || "").trim();
-}
-function requestVoiceUser(request) {
-  const token = voiceToken(request);
-  if (!token) return null;
-  const tokenHash = hashToken(token);
-  const user = statements.getVoiceOwner.get(tokenHash) || null;
-  if (user) statements.touchVoiceToken.run(new Date().toISOString(), tokenHash);
-  return user;
 }
 function secureRequest(request) {
   const forwarded = trustProxy ? request.headers["x-forwarded-proto"] : "";
@@ -334,99 +296,6 @@ function validDocument(document) {
   if (!Array.isArray(document.tasks) || !Array.isArray(document.projects)) return false;
   if (!Array.isArray(document.courses) || !Array.isArray(document.timeSlots) || !Array.isArray(document.courseExceptions)) return false;
   return JSON.stringify(document).length <= maxBodyBytes;
-}
-
-function voiceId(prefix) { return `${prefix}-${crypto.randomUUID()}`; }
-function addVoiceDraft(document, draft, commandId) {
-  if (draft.kind === "project") {
-    const project = {
-      id: voiceId("project"), name: String(draft.name || draft.title || "语音项目").slice(0, 120), goal: "",
-      startDate: "", due: draft.due || "", color: "sage", milestones: [], nextActionTaskId: "",
-      source: "voice", voiceCommandId: commandId, createdAt: Date.now(),
-    };
-    document.projects.unshift(project);
-    return { kind: "project", id: project.id, title: project.name };
-  }
-  if (draft.kind === "course") {
-    const course = {
-      id: voiceId("course"), name: String(draft.name || draft.title || "语音课程").slice(0, 120), code: draft.code || "",
-      campus: draft.campus || "", teacher: draft.teacher || "", location: draft.location || "", day: Number(draft.day) || 1,
-      startSection: Number(draft.startSection) || 1, endSection: Number(draft.endSection) || Number(draft.startSection) || 1,
-      color: "#4F6BED", colorAuto: true, weeks: Array.isArray(draft.weeks) ? draft.weeks : [],
-      reminderMinutes: Number.isFinite(draft.reminderMinutes) ? draft.reminderMinutes : 10, alarmMode: false,
-      notes: draft.notes || "", source: "voice", voiceCommandId: commandId, createdAt: Date.now(),
-    };
-    document.courses.push(course);
-    return { kind: "course", id: course.id, title: course.name };
-  }
-  const task = {
-    id: voiceId("task"), title: String(draft.title || "语音事项").slice(0, 200), notes: draft.notes || "",
-    due: draft.due || "", dueTime: draft.dueTime || "", startDate: draft.startDate || "", startTime: draft.startTime || "",
-    endDate: draft.endDate || "", endTime: draft.endTime || "", location: draft.location || "",
-    reminderMinutes: Number.isFinite(draft.reminderMinutes) ? draft.reminderMinutes : -1, alarmMode: false,
-    estimateMinutes: Number(draft.estimateMinutes) || 0, projectId: draft.projectId || "", courseId: draft.courseId || "",
-    type: draft.type || "task", repeat: draft.repeat || "none", important: draft.important ?? null, urgent: draft.urgent ?? null,
-    quadrant: draft.important === true && draft.urgent === true ? "q1" : draft.important === true && draft.urgent === false ? "q2" : draft.important === false && draft.urgent === true ? "q3" : draft.important === false && draft.urgent === false ? "q4" : null,
-    today: Boolean(draft.today), completed: false, source: "voice", voiceCommandId: commandId, confirmationIssues: Array.isArray(draft.issues) ? draft.issues : [], createdAt: Date.now(),
-  };
-  document.tasks.unshift(task);
-  return { kind: "task", id: task.id, title: task.title };
-}
-function createVoiceCommand(userId, text) {
-  const source = String(text || "").trim();
-  if (!source) throw Object.assign(new Error("请提供语音指令文字"), { status: 400 });
-  if (source.length > 500) throw Object.assign(new Error("语音指令不能超过 500 个字符"), { status: 400 });
-  const current = statements.getState.get(userId);
-  const document = parseDocument(current?.document);
-  if (!validDocument(document)) throw Object.assign(new Error("请先在方寸网页中初始化并同步一次数据"), { status: 409 });
-  const drafts = smartParser.parseNaturalBatch(source, {
-    now: new Date(), totalWeeks: Number(document.semester?.totalWeeks) || 20,
-    projects: document.projects, courses: document.courses,
-  });
-  if (!drafts.length) throw Object.assign(new Error("没有识别到可创建的日程、提醒或待办"), { status: 422 });
-  const commandId = voiceId("voice");
-  const created = drafts.map((draft) => addVoiceDraft(document, draft, commandId));
-  const labels = { task: "事项", project: "项目", course: "课程" };
-  const summary = created.map((item) => `${labels[item.kind]}“${item.title}”`).join("、");
-  const serialized = JSON.stringify(document);
-  if (serialized.length > maxBodyBytes) throw Object.assign(new Error("用户数据已达到容量上限"), { status: 413 });
-  const now = new Date().toISOString();
-  const revision = current.revision + 1;
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    statements.addSnapshot.run(userId, current.revision, current.document, now);
-    statements.updateState.run(serialized, revision, now, userId);
-    statements.addVoiceCommand.run(commandId, userId, now, source, `已创建${summary}`, JSON.stringify({ created }));
-    statements.pruneVoiceCommands.run(userId, userId);
-    statements.pruneSnapshots.run(userId, userId);
-    database.exec("COMMIT");
-  } catch (error) { database.exec("ROLLBACK"); throw error; }
-  return { id: commandId, createdAt: now, text: source, summary: `已创建${summary}`, status: "created", created, revision };
-}
-function undoVoiceCommand(userId, commandId) {
-  const command = statements.getVoiceCommand.get(commandId, userId);
-  if (!command) throw Object.assign(new Error("语音命令不存在"), { status: 404 });
-  if (command.status === "undone") return { ...command, resultJson: undefined, status: "undone", alreadyUndone: true };
-  const current = statements.getState.get(userId);
-  const document = parseDocument(current?.document);
-  if (!validDocument(document)) throw Object.assign(new Error("当前用户数据不可用"), { status: 409 });
-  const created = parseDocument(command.resultJson)?.created || [];
-  const ids = new Set(created.map((item) => item.id));
-  document.tasks = document.tasks.filter((item) => !ids.has(item.id));
-  document.projects = document.projects.filter((item) => !ids.has(item.id));
-  document.courses = document.courses.filter((item) => !ids.has(item.id));
-  const serialized = JSON.stringify(document);
-  const now = new Date().toISOString();
-  const revision = current.revision + 1;
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    statements.addSnapshot.run(userId, current.revision, current.document, now);
-    statements.updateState.run(serialized, revision, now, userId);
-    statements.markVoiceCommandUndone.run(commandId, userId);
-    statements.pruneSnapshots.run(userId, userId);
-    database.exec("COMMIT");
-  } catch (error) { database.exec("ROLLBACK"); throw error; }
-  return { id: command.id, status: "undone", summary: command.summary, revision };
 }
 
 function persistExternalDocument(userId, document) {
@@ -649,35 +518,7 @@ async function handleApi(request, response, url) {
     return json(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie(request) });
   }
   if (!configured) return json(response, 428, { error: "请先初始化管理员账号" });
-  if (request.method === "POST" && url.pathname === "/api/voice/command") {
-    const voiceUser = user || requestVoiceUser(request);
-    if (!voiceUser) return json(response, 401, { error: "请先登录或提供有效的语音令牌" });
-    if (blocked(request, "voice-command", String(voiceUser.id), voiceCommandLimit)) return json(response, 429, { error: "语音指令过于频繁，请稍后再试" });
-    recordFailure(request, "voice-command", String(voiceUser.id));
-    const body = await readJson(request);
-    return json(response, 201, { ok: true, command: createVoiceCommand(voiceUser.id, body.text) });
-  }
   if (!user) return json(response, 401, { error: "请先登录" });
-
-  if (url.pathname === "/api/voice/token") {
-    if (request.method === "GET") {
-      const token = statements.getVoiceTokenForUser.get(user.id);
-      return json(response, 200, { enabled: Boolean(token), createdAt: token?.createdAt || null, lastAccessAt: token?.lastAccessAt || null });
-    }
-    if (request.method === "POST") {
-      const token = crypto.randomBytes(32).toString("base64url");
-      const createdAt = new Date().toISOString();
-      statements.setVoiceToken.run(hashToken(token), user.id, createdAt);
-      return json(response, 201, { enabled: true, createdAt, token });
-    }
-  }
-  if (request.method === "GET" && url.pathname === "/api/voice/commands") {
-    const commands = statements.listVoiceCommands.all(user.id).map(({ resultJson, ...command }) => ({ ...command, created: parseDocument(resultJson)?.created || [] }));
-    return json(response, 200, { commands });
-  }
-  const voiceUndoMatch = url.pathname.match(/^\/api\/voice\/commands\/([^/]+)\/undo$/);
-  if (request.method === "POST" && voiceUndoMatch) return json(response, 200, { ok: true, command: undoVoiceCommand(user.id, decodeURIComponent(voiceUndoMatch[1])) });
-
   if (url.pathname === "/api/calendar/subscription") {
     if (request.method === "GET") {
       const subscription = statements.getCalendarTokenForUser.get(user.id);
@@ -732,6 +573,18 @@ async function handleApi(request, response, url) {
     statements.deleteUserSessions.run(user.id);
     createSession(user.id, request, response);
     return json(response, 200, { ok: true });
+  }
+  if (request.method === "DELETE" && url.pathname === "/api/auth/account") {
+    if (user.role !== "user") return json(response, 403, { error: "管理员账号不能在应用内注销" });
+    const body = await readJson(request);
+    if (blocked(request, "delete-account", user.username, 5)) return json(response, 429, { error: "验证尝试过多，请 15 分钟后再试" });
+    if (typeof body.password !== "string" || !verifyPassword(body.password, user.password_record)) {
+      recordFailure(request, "delete-account", user.username);
+      return json(response, 401, { error: "当前密码不正确" });
+    }
+    statements.deleteUser.run(user.id);
+    clearFailures(request, "delete-account", user.username);
+    return json(response, 200, { ok: true, deleted: true }, { "Set-Cookie": clearSessionCookie(request) });
   }
   if (request.method === "GET" && url.pathname === "/api/data") {
     const row = statements.getState.get(user.id);
@@ -819,6 +672,19 @@ function serveStatic(request, response, url) {
   if (!publicFiles.has(relative)) { response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); response.end("Not found"); return; }
   const filename = path.join(root, relative);
   if (!fs.existsSync(filename)) { response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); response.end("Not found"); return; }
+  if (relative === "privacy.html" || relative === "index.html") {
+    const replacements = {
+      "{{OPERATOR_NAME}}": process.env.FANGCUN_OPERATOR_NAME || "发布前待配置",
+      "{{CONTACT}}": process.env.FANGCUN_CONTACT || "发布前待配置",
+      "{{APP_BEIAN}}": process.env.FANGCUN_APP_BEIAN || "发布前待配置",
+      "{{ICP_BEIAN}}": process.env.FANGCUN_ICP_BEIAN || "发布前待配置",
+    };
+    let content = fs.readFileSync(filename, "utf8");
+    for (const [placeholder, value] of Object.entries(replacements)) content = content.replaceAll(placeholder, escapePublicText(value));
+    response.writeHead(200, { "Content-Type": types[".html"], "Content-Length": Buffer.byteLength(content), "Cache-Control": "no-cache, no-store, must-revalidate" });
+    if (request.method === "HEAD") response.end(); else response.end(content);
+    return;
+  }
   const cacheControl = relative === "icon.svg" ? "public, max-age=3600" : "no-cache, no-store, must-revalidate";
   response.writeHead(200, { "Content-Type": types[path.extname(filename)] || "application/octet-stream", "Cache-Control": cacheControl });
   if (request.method === "HEAD") response.end(); else fs.createReadStream(filename).pipe(response);

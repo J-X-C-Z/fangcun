@@ -2,6 +2,7 @@ package app.fangcun;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.AlarmManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -23,9 +24,11 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
     private static final String APP_URL = "https://fangcun.example.org/";
     private static final String APP_HOST = "fangcun.example.org";
+    private static final String PRIVACY_CONSENT_KEY = "privacy-consent-2026-09-03";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1201;
     private static final int CALENDAR_PERMISSION_REQUEST = 1202;
     private WebView webView;
+    private View loadingView;
     private SystemCalendarBridge systemCalendar;
 
     @Override
@@ -36,11 +39,50 @@ public class MainActivity extends Activity {
         ReminderReceiver.ensureChannel(this);
         systemCalendar = new SystemCalendarBridge(this);
         webView = findViewById(R.id.webview);
+        loadingView = findViewById(R.id.loadingView);
         webView.setBackgroundColor(Color.rgb(244, 242, 237));
         configureWebView();
         if (savedInstanceState == null) {
-            if (!handleVoiceIntent(getIntent())) webView.loadUrl(APP_URL + integrationReturnQuery(getIntent()));
-        } else webView.restoreState(savedInstanceState);
+            if (hasPrivacyConsent()) startWebApp();
+            else showPrivacyConsent();
+        } else if (hasPrivacyConsent()) {
+            webView.restoreState(savedInstanceState);
+            webView.setVisibility(View.VISIBLE);
+            loadingView.setVisibility(View.GONE);
+        } else {
+            showPrivacyConsent();
+        }
+    }
+
+    private boolean hasPrivacyConsent() {
+        return getPreferences(MODE_PRIVATE).getBoolean(PRIVACY_CONSENT_KEY, false);
+    }
+
+    private void startWebApp() {
+        webView.loadUrl(APP_URL + integrationReturnQuery(getIntent()));
+    }
+
+    private void showPrivacyConsent() {
+        String message = "欢迎使用方寸。请在使用前阅读并决定是否同意隐私政策。\n\n"
+            + "方寸用于管理任务、课程、截止日期、长期项目和提醒。你主动创建或导入的这些内容会保存在方寸服务器及本机 WebView 存储中，用于登录、同步与展示。\n\n"
+            + "只有在你主动开启相应功能后，方寸才会申请通知、日历读写以及闹钟与提醒权限。日历权限用于与 Android 系统日历同步；通知和闹钟权限用于按你的设置发送提醒。拒绝可选权限不会影响其他基础功能。\n\n"
+            + "连接 Outlook 或 Google 日历时，将由对应平台显示授权页面；方寸仅在你授权后处理完成同步所需的日历数据和令牌。方寸不含广告 SDK，不出售个人信息。\n\n"
+            + "你可以在应用内查看、更正和导出数据，也可以断开第三方日历、撤销订阅或永久注销普通账号。完整的保存期限、安全措施、开发者与联系方式以《方寸隐私政策》为准。";
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("方寸隐私政策")
+            .setMessage(message)
+            .setCancelable(false)
+            .setPositiveButton("同意并继续", (ignored, which) -> {
+                getPreferences(MODE_PRIVATE).edit().putBoolean(PRIVACY_CONSENT_KEY, true).apply();
+                startWebApp();
+            })
+            .setNegativeButton("拒绝并退出", (ignored, which) -> finishAndRemoveTask())
+            .setNeutralButton("查看完整政策", null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view ->
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(APP_URL + "privacy.html")))
+        ));
+        dialog.show();
     }
 
     private void configureEdgeToEdgeWindow() {
@@ -71,10 +113,19 @@ public class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
+        settings.setSaveFormData(false);
+        settings.setSupportMultipleWindows(false);
+        settings.setSafeBrowsingEnabled(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setUserAgentString(settings.getUserAgentString() + " FangcunAndroid/1.0");
         webView.addJavascriptInterface(new NativeBridge(), "FangcunNative");
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                view.setVisibility(View.VISIBLE);
+                loadingView.setVisibility(View.GONE);
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
@@ -163,6 +214,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (!hasPrivacyConsent()) return;
         ReminderScheduler.rescheduleStored(this);
         if (webView != null) webView.postDelayed(() -> webView.evaluateJavascript("window.FangcunNativeCalendarResume&&window.FangcunNativeCalendarResume()", null), 250);
     }
@@ -171,19 +223,9 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (handleVoiceIntent(intent)) return;
+        if (!hasPrivacyConsent()) { showPrivacyConsent(); return; }
         String query = integrationReturnQuery(intent);
         if (!query.isEmpty() && webView != null) webView.loadUrl(APP_URL + query);
-    }
-
-    private boolean handleVoiceIntent(Intent intent) {
-        Uri data = intent == null ? null : intent.getData();
-        if (data == null || !"fangcun".equalsIgnoreCase(data.getScheme()) || !"voice".equalsIgnoreCase(data.getHost())) return false;
-        String text = data.getQueryParameter("text");
-        Uri.Builder target = Uri.parse(APP_URL).buildUpon().appendQueryParameter("quick", "voice");
-        if (text != null && !text.trim().isEmpty()) target.appendQueryParameter("text", text.trim());
-        webView.loadUrl(target.build().toString());
-        return true;
     }
 
     private String integrationReturnQuery(Intent intent) {
