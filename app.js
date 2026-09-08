@@ -1162,8 +1162,8 @@ function renderTaskCard(task) {
     <div class="task-meta">
       ${dueText ? `<span class="meta-tag deadline-status ${dueClass}">◷ ${escapeHTML(dueText)}</span>` : ""}
       ${scheduleText ? `<span class="meta-tag">▣ ${escapeHTML(scheduleText)}</span>` : ""}
-      ${project ? `<span class="meta-tag" style="color:${projectColors[project.color] || projectColors.sage}">◇ ${escapeHTML(project.name)}</span>` : ""}
-      ${course ? `<span class="meta-tag" style="color:${course.color}">▦ ${escapeHTML(course.name)}</span>` : ""}
+      ${project ? `<span class="meta-tag identity-tag" style="--identity-color:${projectColors[project.color] || projectColors.sage}">◇ ${escapeHTML(project.name)}</span>` : ""}
+      ${course ? `<span class="meta-tag identity-tag" style="--identity-color:${course.color}">▦ ${escapeHTML(course.name)}</span>` : ""}
       ${task.type && task.type !== "task" ? `<span class="meta-tag">${taskTypeLabels[task.type] || "任务"}</span>` : ""}
       ${task.repeat && task.repeat !== "none" ? `<span class="meta-tag">↻ ${repeatLabels[task.repeat]}</span>` : ""}
       ${task.today ? '<span class="meta-tag">今日</span>' : ""}
