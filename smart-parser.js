@@ -50,51 +50,141 @@
     return [...weeks].sort((a, b) => a - b);
   }
 
-  function parseDate(text, now = new Date()) {
+  function parseDate(text, now = new Date()) { return temporalInput(text, now).date; }
+
+  // Preserve source offsets: titles only lose successfully recognized spans.
+  function temporalInput(text, now = new Date()) {
     const source = String(text);
-    if (/大后天/.test(source)) return localISO(addDays(now, 3));
-    if (/后天/.test(source)) return localISO(addDays(now, 2));
-    if (/明天|明早|明晚/.test(source)) return localISO(addDays(now, 1));
-    if (/今天|今晚|今早/.test(source)) return localISO(now);
-    if (/下周末/.test(source)) {
-      const current = now.getDay() || 7;
-      return localISO(addDays(now, 13 - current));
+    let scan = source.replace(/《[^》]*》|“[^”]*”|"[^"]*"|https?:\/\/\S+/g, (part) => " ".repeat(part.length));
+    const spans = [], hints = [];
+    const result = { date: "", time: "", endTime: "", endDate: "", label: "", approximate: false, rangeStart: "", rangeEnd: "", spans, hints };
+    const take = (match) => {
+      if (!match) return;
+      spans.push({ start: match.index, end: match.index + match[0].length, text: source.slice(match.index, match.index + match[0].length) });
+      scan = scan.slice(0, match.index) + " ".repeat(match[0].length) + scan.slice(match.index + match[0].length);
+    };
+    const validDate = (year, month, day) => {
+      const date = new Date(year, month - 1, day, 12);
+      return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? localISO(date) : "";
+    };
+    let match = scan.match(/(?:半|[\d一二三四五六七八九十两]+)\s*(?:个)?(?:小时|分钟|天)(?:之)?后/);
+    if (match) {
+      const number = match[0].startsWith("半") ? 0.5 : toNumber(match[0].match(/^[\d一二三四五六七八九十两]+/)[0]);
+      const date = new Date(now.getTime() + number * (/天/.test(match[0]) ? 86400000 : /小时/.test(match[0]) ? 3600000 : 60000));
+      result.date = localISO(date);
+      if (!/天/.test(match[0])) result.time = pad(date.getHours()) + ":" + pad(date.getMinutes());
+      take(match);
     }
-    if (/(?:本周|这周)?周末/.test(source)) {
-      const current = now.getDay() || 7;
-      return localISO(addDays(now, 6 - current));
+    if (!result.date) {
+      match = scan.match(/(?<![\dA-Za-z./-])(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日|号)?(?!\d)/);
+      if (match) {
+        result.date = validDate(+match[1], +match[2], +match[3]);
+        if (result.date) take(match); else hints.push("日期不存在，请检查年月日");
+      }
     }
-    if (/月底|月末/.test(source)) return localISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-    const nextMonthDay = source.match(/下个月\s*([\d一二三四五六七八九十两]{1,3})[日号]/);
-    if (nextMonthDay) return localISO(new Date(now.getFullYear(), now.getMonth() + 1, toNumber(nextMonthDay[1])));
-    const iso = source.match(/\b(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?\b/);
-    if (iso) return `${iso[1]}-${pad(iso[2])}-${pad(iso[3])}`;
-    const monthDay = source.match(/(?:今年)?([\d一二三四五六七八九十两]{1,3})月([\d一二三四五六七八九十两]{1,3})[日号]?/);
-    if (monthDay) {
-      const month = toNumber(monthDay[1]);
-      const day = toNumber(monthDay[2]);
-      let date = new Date(now.getFullYear(), month - 1, day);
-      if (date < new Date(now.getFullYear(), now.getMonth(), now.getDate()) && !/今年/.test(source)) date = new Date(now.getFullYear() + 1, month - 1, day);
-      return localISO(date);
+    if (!result.date && !hints.length) {
+      match = scan.match(/(?:(今年|明年))?([\d一二三四五六七八九十两]{1,3})月([\d一二三四五六七八九十两]{1,3})[日号]?/);
+      if (match) {
+        const month = toNumber(match[2]), day = toNumber(match[3]);
+        let year = now.getFullYear() + (match[1] === "明年" ? 1 : 0);
+        let date = validDate(year, month, day);
+        if (date && date < localISO(now) && !match[1]) date = validDate(++year, month, day);
+        result.date = date;
+        if (date) take(match); else hints.push("日期不存在，请检查月份和日期");
+      }
     }
-    const bareDay = source.match(/(?:^|[^月\d])([\d一二三四五六七八九十两]{1,3})[日号](?:[^\d]|$)/);
-    if (bareDay) {
-      const day = toNumber(bareDay[1]);
-      let date = new Date(now.getFullYear(), now.getMonth(), day);
-      if (date < new Date(now.getFullYear(), now.getMonth(), now.getDate())) date = new Date(now.getFullYear(), now.getMonth() + 1, day);
-      return localISO(date);
+    if (!result.date && !hints.length) {
+      match = scan.match(/(下个月|本月)?([\d一二三四五六七八九十两]{1,3})[号日](?!报|记|元|志)/);
+      if (match) {
+        const day = toNumber(match[2]);
+        const month = new Date(now.getFullYear(), now.getMonth() + (match[1] === "下个月" || (!match[1] && day < now.getDate()) ? 1 : 0), 1);
+        result.date = validDate(month.getFullYear(), month.getMonth() + 1, day);
+        if (result.date) take(match);
+      }
     }
-    const weekday = source.match(/(下下周|下周|这周|本周)?(?:星期|周)([一二三四五六日天])/);
-    if (weekday) {
-      const target = weekdayMap[weekday[2]];
-      const current = now.getDay() || 7;
-      let distance = target - current;
-      if (weekday[1] === "下下周") distance += distance > 0 ? 14 : 21;
-      else if (weekday[1] === "下周") distance += distance > 0 ? 7 : 14;
-      else if (distance < 0 || (!weekday[1] && distance === 0)) distance += 7;
-      return localISO(addDays(now, distance));
+    if (!result.date) {
+      match = scan.match(/大后天|后天|明天|今天|明早|明晚|今早|今晚/);
+      if (match) {
+        result.date = localISO(addDays(now, /大后天/.test(match[0]) ? 3 : /后天/.test(match[0]) ? 2 : /明/.test(match[0]) ? 1 : 0));
+        if (/早|晚/.test(match[0])) result.period = /早/.test(match[0]) ? "早上" : "晚上";
+        take(match);
+      }
     }
-    return "";
+    if (!result.date) {
+      match = scan.match(/(下下|下|这|本)?(?:周|星期|礼拜)([一二三四五六日天])/);
+      if (match) {
+        const current = now.getDay() || 7;
+        let delta = weekdayMap[match[2]] - current;
+        if (match[1] === "下下") delta += 14;
+        else if (match[1] === "下") delta += 7;
+        else if (!match[1] && delta < 0) delta += 7;
+        result.date = localISO(addDays(now, delta));
+        take(match);
+      }
+    }
+    if (!result.date) {
+      match = scan.match(/下周末|本周末|这周末|周末|下下周|下周|本周|这周|下个月|月底|月末|月初|过几天|这几天|最近|近期/);
+      if (match) {
+        const phrase = match[0], weekday = now.getDay() || 7;
+        let start = new Date(now), end = new Date(now);
+        if (/周末/.test(phrase)) {
+          start = addDays(now, 6 - weekday + (phrase === "下周末" ? 7 : 0)); end = addDays(start, 1);
+          if (phrase === "周末" && weekday === 7) start = new Date(now);
+        } else if (/周/.test(phrase)) {
+          start = addDays(now, 1 - weekday + (phrase === "下下周" ? 14 : phrase === "下周" ? 7 : 0)); end = addDays(start, 6);
+          if (/本|这/.test(phrase) && start < now) start = new Date(now);
+        } else if (/月底|月末/.test(phrase)) {
+          end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 12); start = end;
+        } else if (phrase === "下个月" || phrase === "月初") {
+          start = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12); end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 12);
+        } else { start = addDays(now, /过几天/.test(phrase) ? 3 : 1); end = addDays(now, 7); }
+        result.rangeStart = localISO(start); result.rangeEnd = localISO(end);
+        result.date = result.rangeStart; result.approximate = true; result.label = phrase;
+        take(match);
+      }
+    }
+    let clockSpan = null;
+    const token = "(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\\s*(?:[01]?\\d|2[0-3]|[一二三四五六七八九十两]{1,3})(?::[0-5]\\d|：[0-5]\\d|点(?:半|一刻|三刻|[\\d一二三四五六七八九十两]{1,3}分?)?|时(?:[0-5]?\\d分)?)";
+    match = scan.match(new RegExp("(?<![\\dA-Za-z.])(" + token + ")\\s*(?:到|至|—|–|-|~|～)\\s*(" + token + ")(?![\\d]|代|尚|候|建议|要求|意见|子|赞)"));
+    if (match) {
+      const range = parseTimeRange((result.period || "") + match[0], result.date);
+      result.time = range.startTime; result.endTime = range.endTime; result.endDate = range.endDate;
+      if (result.time) { clockSpan = { start: match.index, end: match.index + match[0].length }; take(match); }
+    } else if (!result.time) {
+      match = scan.match(new RegExp("(?<![\\dA-Za-z.])" + token + "(?![\\d]|代|尚|候|建议|要求|意见|子|赞)"));
+      if (match && (/[:：]|凌晨|早上|上午|中午|下午|傍晚|晚上/.test(match[0]) || /^\s*(?:提醒我|记得|请)?\s*(?:在|于|约|大约|大概)?\s*$/.test(scan.slice(0, match.index)))) {
+        result.time = parseTime((result.period || "") + match[0]);
+        if (result.time) { clockSpan = { start: match.index, end: match.index + match[0].length }; take(match); }
+      }
+    }
+    if (!result.time) {
+      match = scan.match(/凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里|睡前|午饭后|晚饭后|稍后|一会儿|一会/);
+      const period = match?.[0] || result.period;
+      if (period) {
+        const defaults = { 凌晨: "01:00", 早上: "08:00", 早晨: "08:00", 上午: "09:00", 中午: "12:00", 下午: "15:00", 傍晚: "18:00", 晚上: "20:00", 夜里: "22:00", 睡前: "22:00", 午饭后: "13:00", 晚饭后: "19:00" };
+        result.time = defaults[period] || "";
+        if (!result.time) { const later = new Date(now.getTime() + 30 * 60000); result.time = pad(later.getHours()) + ":" + pad(later.getMinutes()); result.date = result.date || localISO(later); }
+        result.date = result.date || localISO(now); result.approximate = true;
+        result.label = [result.label, period].filter(Boolean).join(" · "); take(match);
+      }
+    }
+    if (clockSpan) {
+      const before = scan.slice(0, clockSpan.start).match(/(?:大约|大概)\s*$/);
+      const after = scan.slice(clockSpan.end).match(/^\s*左右(?!手|眼|脚|两|逢源|为难|摇摆)/);
+      for (const qualifier of [before, after]) {
+        if (!qualifier) continue;
+        if (qualifier === after) qualifier.index += clockSpan.end;
+        result.approximate = true;
+        result.label = [result.label, qualifier[0].trim()].filter(Boolean).join(" · ");
+        take(qualifier);
+      }
+    }
+    return result;
+  }
+
+  function removeSpans(source, spans) {
+    return String(source).split("").map((char, index) => spans.some((span) => index >= span.start && index < span.end) ? "" : char).join("")
+      .replace(/^[\s，,；;。:：]+|[\s，,；;。:：]+$/g, "").replace(/[，,]\s*[，,]/g, "，").trim();
   }
 
   function parseTime(text) {
@@ -144,27 +234,33 @@
     return -1;
   }
 
-  function parseEstimate(text) {
-    const match = String(text).match(/(?:预计|估计|大概|约|需要|持续)?\s*([\d一二三四五六七八九十两]{1,3})\s*(分钟|分|小时|钟头)/);
-    if (!match) return 0;
-    return toNumber(match[1]) * (/小时|钟头/.test(match[2]) ? 60 : 1);
+  function estimateMatch(text) {
+    return String(text).match(/(?:预计|估计|耗时|需要|持续)\s*(?:半|[\d一二三四五六七八九十两]{1,3})\s*(?:个)?(?:分钟|小时|钟头)/)
+      || String(text).match(/(?<=开会|聚餐|讨论|训练|复习|学习)(?:半|[\d一二三四五六七八九十两]{1,3})\s*(?:个)?(?:分钟|小时|钟头)/);
   }
 
-  function cleanTitle(text) {
-    return String(text)
-      .replace(/^(?:请)?(?:帮我)?(?:提醒我|记得|安排一下|安排|添加|新建|创建|记录|我要|我需要)\s*/g, " ")
-      .replace(/(?:今天|明天|后天|大后天|今晚|明早|明晚|下下周|下周|这周|本周)?(?:星期|周)[一二三四五六日天]/g, " ")
-      .replace(/(?:今天|明天|后天|大后天|今晚|明早|明晚|今早)/g, " ")
-      .replace(/(?:20\d{2}[-/.年])?[\d一二三四五六七八九十两]{1,3}[-/.月][\d一二三四五六七八九十两]{1,3}日?/g, " ")
-      .replace(/(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*[\d一二三四五六七八九十两]{1,3}(?::\d{2}|[点时](?:半|一刻|三刻|[\d一二三四五六七八九十两]{1,3}分?)?)/g, " ")
-      .replace(/\s*(?:到|至|—|–|~|～)\s*/g, " ")
-      .replace(/提前\s*[\d一二三四五六七八九十两]{1,3}\s*(?:分钟|分|小时|钟头|天)(?:提醒)?|(?:到时候|届时|准时)提醒/g, " ")
-      .replace(/(?:预计|估计|大概|约|需要|持续)?\s*[\d一二三四五六七八九十两]{1,3}\s*(?:分钟|分|小时|钟头)/g, " ")
-      .replace(/(?:非常)?重要(?:且|和|、)?(?:非常)?紧急|重要不紧急|紧急不重要|不重要不紧急/g, " ")
-      .replace(/(?:放到|加入|归入)(?:第一|第二|第三|第四|1|2|3|4)?象限/g, " ")
-      .replace(/[,，。；;]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  function parseEstimate(text) {
+    const match = estimateMatch(text);
+    if (!match) return 0;
+    const number = match[0].match(/半|[\d一二三四五六七八九十两]+/)[0];
+    return (number === "半" ? 0.5 : toNumber(number)) * (/小时|钟头/.test(match[0]) ? 60 : 1);
+  }
+
+  function cleanTitle(text, temporal = temporalInput(text)) {
+    const spans = [...temporal.spans];
+    const scan = String(text).replace(/《[^》]*》|“[^”]*”|"[^"]*"/g, (part) => " ".repeat(part.length));
+    const patterns = [
+      /^(?:请)?(?:帮我)?(?:提醒我|记得|安排一下|添加|新建|创建|我要|我需要)\s*/,
+      /提前\s*[\d一二三四五六七八九十两]{1,3}\s*(?:分钟|分|小时|钟头|天)(?:提醒)?|(?:到时候|届时|准时)提醒/g,
+      /不重要不紧急|重要不紧急|紧急不重要|(?:非常)?重要(?:且|和|、)?(?:非常)?紧急/g,
+      /(?:放到|加入|归入)(?:第一|第二|第三|第四|1|2|3|4)象限/g,
+    ];
+    for (const pattern of patterns) {
+      for (const match of scan.matchAll(new RegExp(pattern.source, "g"))) spans.push({ start: match.index, end: match.index + match[0].length });
+    }
+    const duration = estimateMatch(scan);
+    if (duration) spans.push({ start: duration.index, end: duration.index + duration[0].length });
+    return removeSpans(text, spans);
   }
 
   function findContextId(text, items) {
@@ -268,11 +364,13 @@
   }
 
   function parseTask(text, context) {
-    const due = parseDate(text, context.now);
-    const range = parseTimeRange(text, due);
-    const parsedTime = parseTime(text);
+    const temporal = temporalInput(text, context.now);
+    const due = temporal.date;
+    const range = { startDate: temporal.endTime ? due : "", startTime: temporal.endTime ? temporal.time : "", endDate: temporal.endDate, endTime: temporal.endTime };
+    const parsedTime = temporal.time;
     const decision = taskDecision(text, due, context.now);
     const issues = [];
+    temporal.hints.forEach((message) => issues.push({ field: "due", message }));
     const projectMatches = findContextMatches(text, context.projects);
     const courseMatches = findContextMatches(text, context.courses);
     let repeat = "none";
@@ -310,13 +408,13 @@
         if (endMinutes >= 1440 && eventStartDate) eventEndDate = localISO(addDays(new Date(`${eventStartDate}T12:00:00`), 1));
       }
     }
-    if (type === "event" && /(?:上午|中午|下午|傍晚|晚上|今晚|明早|明晚)/.test(text) && !parsedTime) issues.push({ field: "startTime", message: "识别到大致时段，请确认具体时间" });
+    if (temporal.approximate) issues.push({ field: "timeSuggestion", message: "“" + temporal.label + "”按建议日期或时间填写，可直接确认或修改" });
     const location = parseLocation(text);
-    let title = cleanTitle(text).replace(/(?:地点|地址|位置)[:：]\s*[^，,。；;]+/g, " ");
+    let title = cleanTitle(text, temporal).replace(/(?:地点|地址|位置)[:：]\s*[^，,。；;]+/g, " ");
     if (location) title = title.replace(new RegExp(`在\\s*${location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), " ");
     title = title.replace(/\s+/g, " ").trim() || text.trim();
     return {
-      kind: "task", title, notes: "", due: taskDue, dueTime, repeat, type,
+      kind: "task", title, notes: "", originalText: text, timeSuggestion: temporal.approximate ? { label: temporal.label, rangeStart: temporal.rangeStart, rangeEnd: temporal.rangeEnd, time: parsedTime } : null, due: taskDue, dueTime, repeat, type,
       startDate: eventStartDate, startTime: eventStartTime,
       endDate: eventEndDate, endTime: eventEndTime, location,
       projectId: projectMatches.length === 1 ? projectMatches[0].id : "",

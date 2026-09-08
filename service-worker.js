@@ -1,4 +1,4 @@
-const CACHE_NAME = "fangcun-v270-unified-calendar";
+const CACHE_NAME = "fangcun-v270-20260908-calendar-controls";
 const APP_SHELL = ["./", "./index.html", "./privacy.html", "./styles.css?v=2.7.0", "./v22-layout.css?v=2.7.0", "./smart-parser.js?v=2.7.0", "./docx-schedule-parser.js?v=2.7.0", "./app.js?v=2.7.0", "./manifest.webmanifest?v=2.7.0", "./icon.svg"];
 
 self.addEventListener("install", (event) => {

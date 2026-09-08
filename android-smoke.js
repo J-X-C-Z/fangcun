@@ -19,6 +19,13 @@ const activity = fs.readFileSync("android/app/src/main/java/app/fangcun/MainActi
 const activityLayout = fs.readFileSync("android/app/src/main/res/layout/activity_main.xml", "utf8");
 const app = fs.readFileSync("app.js", "utf8");
 const gradle = fs.readFileSync("android/app/build.gradle.kts", "utf8");
+for (const marker of ["setOnApplyWindowInsetsListener", "WindowInsets.Type.systemBars()", "WindowInsets.Type.displayCutout()", "--native-safe-top", "notifyExternalOpened", "FangcunExternalOpened"]) {
+  if (!activity.includes(marker)) throw new Error(`安卓安全区或授权反馈缺少：${marker}`);
+}
+for (const marker of ["setWebChromeClient", "onShowFileChooser", "ACTION_OPEN_DOCUMENT", "ACTION_CREATE_DOCUMENT", "CATEGORY_OPENABLE", "saveDocument", "FangcunDocumentSaved", "fileChooserCallback.onReceiveValue", "calendarRequest", "fileWorker.execute"]) {
+  if (!activity.includes(marker)) throw new Error(`安卓文件与异步日历桥缺少：${marker}`);
+}
+if (!manifest.includes('android:configChanges="orientation|screenSize|keyboardHidden"')) throw new Error("旋转屏幕不得重建并丢失文件选择状态");
 for (const permission of ["POST_NOTIFICATIONS", "SCHEDULE_EXACT_ALARM", "RECEIVE_BOOT_COMPLETED", "READ_CALENDAR", "WRITE_CALENDAR", "com.android.alarm.permission.SET_ALARM"]) {
   if (!manifest.includes(permission)) throw new Error(`安卓端缺少权限声明：${permission}`);
 }

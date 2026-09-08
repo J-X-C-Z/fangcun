@@ -30,6 +30,7 @@ const document = {
 };
 
 const context = {
+  AbortController,
   console,
   document,
   navigator: {},
@@ -61,6 +62,14 @@ if (!saved?.semester || !saved?.timeSlots?.length || !Array.isArray(saved?.cours
 }
 
 vm.runInContext(`
+  const idempotentTask = { id: "completion-idempotent", title: "重复完成保护", completed: false, repeat: "none" };
+  data.tasks.push(idempotentTask);
+  toggleComplete(idempotentTask.id, true);
+  toggleComplete(idempotentTask.id, true);
+  if (!idempotentTask.completed) throw new Error("重复完成不能恢复事项");
+  toggleComplete(idempotentTask.id, false);
+  if (idempotentTask.completed) throw new Error("显式恢复仍应可用");
+  data.tasks = data.tasks.filter((task) => task.id !== idempotentTask.id);
   const recurringTestTask = data.tasks[0];
   recurringTestTask.repeat = "weekly";
   recurringTestTask.due = "2026-08-24";
@@ -251,7 +260,7 @@ if (context.__importFlow.afterImport !== 3 || !context.__importFlow.mergedWeeks.
 }
 
 vm.runInContext(`
-  const unresolved = FangcunSmartParser.parseNaturalInput("下周交实验报告", { now: new Date("2026-08-25T09:00:00+08:00") });
+  const unresolved = FangcunSmartParser.parseNaturalInput("15:00交实验报告", { now: new Date("2026-08-25T09:00:00+08:00") });
   data.tasks = [];
   addSmartDraft(unresolved);
   globalThis.__uncertainFlow = data.tasks[0];

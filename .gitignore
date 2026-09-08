@@ -23,6 +23,7 @@ android/.idea/
 # 发布产物（历史版本压缩包与 APK 不进 git，发布走 GitHub Releases）
 release/*.apk
 release/*.aab
+release/qa/
 fangcun-release-*.tar.gz
 fangcun-gpt-review-package-*.zip
 

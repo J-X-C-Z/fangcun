@@ -15,11 +15,20 @@ import android.provider.Settings;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.WindowInsets;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
+import android.widget.Toast;
+import org.json.JSONObject;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final String APP_URL = "https://fangcun.example.org/";
@@ -29,7 +38,13 @@ public class MainActivity extends Activity {
     private static final int CALENDAR_PERMISSION_REQUEST = 1202;
     private WebView webView;
     private View loadingView;
+    private String safeInsetsScript = "";
     private SystemCalendarBridge systemCalendar;
+    private static final int OPEN_DOCUMENT_REQUEST = 1301;
+    private static final int SAVE_DOCUMENT_REQUEST = 1302;
+    private ValueCallback<Uri[]> fileChooserCallback;
+    private byte[] pendingExport;
+    private final ExecutorService fileWorker = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,6 +57,28 @@ public class MainActivity extends Activity {
         loadingView = findViewById(R.id.loadingView);
         webView.setBackgroundColor(Color.rgb(244, 242, 237));
         configureWebView();
+        webView.setOnApplyWindowInsetsListener((view, insets) -> {
+            int top = insets.getStableInsetTop(), bottom = insets.getStableInsetBottom();
+            int left = insets.getStableInsetLeft(), right = insets.getStableInsetRight();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                top = bars.top; bottom = bars.bottom; left = bars.left; right = bars.right;
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && insets.getDisplayCutout() != null) {
+                top = Math.max(top, insets.getDisplayCutout().getSafeInsetTop());
+                bottom = Math.max(bottom, insets.getDisplayCutout().getSafeInsetBottom());
+                left = Math.max(left, insets.getDisplayCutout().getSafeInsetLeft());
+                right = Math.max(right, insets.getDisplayCutout().getSafeInsetRight());
+            }
+            float density = getResources().getDisplayMetrics().density;
+            safeInsetsScript = "(()=>{const s=document.documentElement.style;"
+                + "s.setProperty('--native-safe-top','" + Math.round(top / density) + "px');"
+                + "s.setProperty('--native-safe-bottom','" + Math.round(bottom / density) + "px');"
+                + "s.setProperty('--native-safe-left','" + Math.round(left / density) + "px');"
+                + "s.setProperty('--native-safe-right','" + Math.round(right / density) + "px');})()";
+            webView.evaluateJavascript(safeInsetsScript, null);
+            return insets;
+        });
+        webView.requestApplyInsets();
         if (savedInstanceState == null) {
             if (hasPrivacyConsent()) startWebApp();
             else showPrivacyConsent();
@@ -119,9 +156,30 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setUserAgentString(settings.getUserAgentString() + " FangcunAndroid/1.0");
         webView.addJavascriptInterface(new NativeBridge(), "FangcunNative");
+        // WebChromeClient also provides the JavaScript confirm/prompt dialogs used by sync.
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (fileChooserCallback != null) fileChooserCallback.onReceiveValue(null);
+                fileChooserCallback = callback;
+                try {
+                    Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    picker.addCategory(Intent.CATEGORY_OPENABLE);
+                    picker.setType("*/*");
+                    picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivityForResult(picker, OPEN_DOCUMENT_REQUEST);
+                } catch (Exception error) {
+                    fileChooserCallback.onReceiveValue(null);
+                    fileChooserCallback = null;
+                    Toast.makeText(MainActivity.this, "无法打开文件选择器，请检查系统文件应用", Toast.LENGTH_LONG).show();
+                }
+                return true;
+            }
+        });
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageCommitVisible(WebView view, String url) {
+                if (!safeInsetsScript.isEmpty()) view.evaluateJavascript(safeInsetsScript, null);
                 view.setVisibility(View.VISIBLE);
                 loadingView.setVisibility(View.GONE);
             }
@@ -137,6 +195,37 @@ public class MainActivity extends Activity {
     }
 
     public final class NativeBridge {
+        @JavascriptInterface
+        public void calendarRequest(String requestId, String operation, String payload) {
+            if (requestId == null || !requestId.matches("[a-zA-Z0-9-]{1,80}") || payload == null || payload.length() > 1048576) return;
+            if (!"read".equals(operation) && !"sync".equals(operation)) return;
+            fileWorker.execute(() -> {
+                String result;
+                try { result = "read".equals(operation) ? systemCalendar.read(payload) : systemCalendar.sync(payload); }
+                catch (Exception error) { result = "{\"error\":\"系统日历暂不可用，请重试\"}"; }
+                final String response = result;
+                webView.post(() -> webView.evaluateJavascript("window.FangcunCalendarResult&&window.FangcunCalendarResult(" + JSONObject.quote(requestId) + "," + JSONObject.quote(response) + ")", null));
+            });
+        }
+
+        @JavascriptInterface
+        public void saveDocument(String filename, String mimeType, String content) {
+            if (content == null || content.length() > 4 * 1024 * 1024 || filename == null) {
+                notifyDocumentSaved("备份过大，无法保存");
+                return;
+            }
+            runOnUiThread(() -> {
+                if (pendingExport != null) { notifyDocumentSaved("请先完成或取消正在进行的文件保存"); return; }
+                pendingExport = content.getBytes(StandardCharsets.UTF_8);
+                Intent picker = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                picker.setType("text/calendar".equals(mimeType) ? "text/calendar" : "application/json");
+                picker.putExtra(Intent.EXTRA_TITLE, filename.replaceAll("[\\\\/\\r\\n]", "_").substring(0, Math.min(filename.length(), 120)));
+                try { startActivityForResult(picker, SAVE_DOCUMENT_REQUEST); }
+                catch (Exception error) { pendingExport = null; notifyDocumentSaved("无法打开保存窗口，请检查系统文件应用"); }
+            });
+        }
+
         @JavascriptInterface
         public void syncReminders(String payload) {
             if (payload == null || payload.length() > 262144) return;
@@ -182,12 +271,20 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void openExternal(String value) {
-            if (value == null || value.length() > 4096) return;
+            if (value == null || value.length() > 4096) { notifyExternalOpened("授权地址无效，请重试连接"); return; }
             Uri uri = Uri.parse(value);
             String host = uri.getHost();
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || !(host.equals("login.microsoftonline.com") || host.endsWith(".microsoftonline.com") || host.equals("accounts.google.com"))) return;
-            runOnUiThread(() -> startActivity(new Intent(Intent.ACTION_VIEW, uri)));
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || !(host.equals("login.microsoftonline.com") || host.endsWith(".microsoftonline.com") || host.equals("accounts.google.com"))) { notifyExternalOpened("授权地址未通过安全检查，请检查日历配置"); return; }
+            runOnUiThread(() -> {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); notifyExternalOpened(""); }
+                catch (Exception error) { notifyExternalOpened("无法打开浏览器，请先安装或启用系统浏览器后重试"); }
+            });
         }
+    }
+
+    private void notifyExternalOpened(String error) {
+        if (webView != null) webView.post(() -> webView.evaluateJavascript(
+            "window.FangcunExternalOpened&&window.FangcunExternalOpened(" + JSONObject.quote(error) + ")", null));
     }
 
     private void openExactAlarmSettingsIfNeeded() {
@@ -197,6 +294,44 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName()));
             startActivity(intent);
         }
+    }
+
+    private void notifyDocumentSaved(String error) {
+        if (webView != null) webView.post(() -> webView.evaluateJavascript(
+            "window.FangcunDocumentSaved&&window.FangcunDocumentSaved(" + JSONObject.quote(error) + ")", null));
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent result) {
+        super.onActivityResult(requestCode, resultCode, result);
+        if (requestCode == OPEN_DOCUMENT_REQUEST) {
+            if (fileChooserCallback != null) {
+                Uri uri = resultCode == RESULT_OK && result != null ? result.getData() : null;
+                // Accept only a user-granted document URI, never file:// or a remote URL.
+                fileChooserCallback.onReceiveValue(uri != null && "content".equals(uri.getScheme()) ? new Uri[]{uri} : null);
+                fileChooserCallback = null;
+            }
+        } else if (requestCode == SAVE_DOCUMENT_REQUEST) {
+            final byte[] bytes = pendingExport;
+            pendingExport = null;
+            final Uri uri = resultCode == RESULT_OK && result != null ? result.getData() : null;
+            if (uri == null || bytes == null) { notifyDocumentSaved("已取消保存"); return; }
+            if (!"content".equals(uri.getScheme())) { notifyDocumentSaved("请选择系统文件应用中的保存位置"); return; }
+            fileWorker.execute(() -> {
+                try (OutputStream stream = getContentResolver().openOutputStream(uri, "wt")) {
+                    if (stream == null) throw new java.io.IOException("No output stream");
+                    stream.write(bytes);
+                } catch (Exception error) { notifyDocumentSaved("文件未保存成功，请重新选择保存位置"); return; }
+                notifyDocumentSaved("");
+            });
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (fileChooserCallback != null) { fileChooserCallback.onReceiveValue(null); fileChooserCallback = null; }
+        fileWorker.shutdown();
+        super.onDestroy();
     }
 
     @Override

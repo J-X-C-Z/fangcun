@@ -65,8 +65,37 @@ assert.equal(estimated.reminderMinutes, 1440);
 assert.equal(estimated.issues.length, 0);
 
 const ambiguous = parseNaturalInput("下周交大学物理实验报告", context);
-assert.equal(ambiguous.due, "");
-assert.equal(ambiguous.issues[0].field, "due");
+assert.equal(ambiguous.due, "2026-08-31", "下周应提供建议日期");
+assert.equal(ambiguous.timeSuggestion.rangeEnd, "2026-09-06");
+assert.equal(ambiguous.issues[0].field, "timeSuggestion", "必须告知用户这是模糊时间建议");
+
+const mondayContext = { ...context, now: new Date("2026-09-07T12:00:00+08:00") };
+const friday = parseNaturalInput("下周五下午开会", mondayContext);
+assert.equal(friday.startDate, "2026-09-18");
+assert.equal(friday.startTime, "15:00");
+assert.equal(friday.timeSuggestion.label, "下午");
+const later = parseNaturalInput("半小时后喝水", mondayContext);
+assert.equal(later.dueTime, "12:30");
+assert.equal(later.estimateMinutes, 0, "相对提醒时间不应被当成事项耗时");
+assert.equal(parseNaturalInput("提交材料，提前三十分钟提醒", context).estimateMinutes, 0);
+assert.equal(parseNaturalInput("本周一交报告", mondayContext).due, "2026-09-07");
+for (const text of ["整理3.5版本报告，补充三点建议", "将材料送到实验室，至少带两份", "阅读《明天下午三点》并写三点建议", "总结三点经验", "分析三点一线", "读一小时速成手册"]) {
+  const result = parseNaturalInput(text, mondayContext);
+  assert.equal(result.title, text, "不能破坏非时间内容：" + text);
+  assert.equal(result.dueTime, "");
+  assert.equal(result.originalText, text);
+}
+const invalidDate = parseNaturalInput("2026年2月30日提交材料", mondayContext);
+assert.equal(invalidDate.due, "");
+assert.ok(invalidDate.title.includes("2月30日"));
+assert.ok(invalidDate.issues.length > 0);
+const numberedNotes = parseNaturalInput("明天总结三点经验，练习左右手协调", mondayContext);
+assert.equal(numberedNotes.title, "总结三点经验，练习左右手协调");
+assert.equal(numberedNotes.dueTime, "");
+const approximateClock = parseNaturalInput("明天大约三点左右练习左右手协调", mondayContext);
+assert.equal(approximateClock.dueTime, "03:00");
+assert.equal(approximateClock.title, "练习左右手协调");
+assert.ok(approximateClock.timeSuggestion);
 
 const twoCourses = parseNaturalInput("明天交物理作业", { ...context, courses: [{ id: "a", name: "物理" }, { id: "b", name: "物理作业" }] });
 assert.equal(twoCourses.courseId, "");

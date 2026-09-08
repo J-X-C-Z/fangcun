@@ -21,7 +21,7 @@ android {
         applicationId = "app.fangcun"
         minSdk = 26
         targetSdk = 36
-        versionCode = 31
+        versionCode = 33
         versionName = "2.7.0"
     }
 

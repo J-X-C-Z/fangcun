@@ -22,41 +22,40 @@ powershell -ExecutionPolicy Bypass -File .\deploy\build-release.ps1
 - `release/fangcun-release-2.7.0.tar.gz`
 - 屏幕上同时显示 SHA-256，可在上传前后核对
 
-## 3. 一条命令升级服务器
+## 3. 阿里云 Workbench 上传（默认部署方式）
 
-Windows 已安装 OpenSSH 时运行：
+使用阿里云控制台的 Workbench 登录服务器。通过文件上传，将本次交付的两个文件放到服务器 `/tmp/`；如果上传到了其他目录，请在下面命令里使用实际路径。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy\upload-and-upgrade.ps1 `
-  -Server "你的服务器公网 IP 或 SSH 域名" `
-  -UserName "admin" `
-  -Port 22 `
-  -IdentityFile "C:\Users\你的用户名\.ssh\id_ed25519"
-```
+- `fangcun-release-2.7.0.tar.gz`
+- `fangcun-SHA256SUMS-20260908.txt`
 
-如果 SSH 使用密码登录，可省略 `-IdentityFile`。脚本依次执行：本地全量检查、SCP 上传、服务器数据备份、安装并重启、健康接口检查、确认服务只监听 `127.0.0.1:18443`、显示最近日志。
+不需要在 Windows 执行 SSH/SCP，也不需要开放安全组端口。APK 留在本地发给手机安装，不放进服务器程序目录。
 
-首次安装还没有数据库时会跳过备份；升级时备份写入服务器 `/var/backups/fangcun/`。脚本不会修改阿里云安全组、防火墙、80/443、Hysteria 或 Cloudflare Tunnel。
+## 4. 在 Workbench 终端执行升级
 
-## 4. 手动上传的等价命令
-
-```powershell
-scp -P 22 .\release\fangcun-release-2.7.0.tar.gz admin@服务器地址:/tmp/fangcun-release-2.7.0.tar.gz
-ssh -p 22 admin@服务器地址
-```
-
-登录服务器后：
+下面是已有方寸服务的升级流程。校验或备份失败会停止，不会继续安装。临时解压目录使用随机名称，避免混入旧包文件。
 
 ```bash
-install -d -m 0700 /tmp/fangcun-release-2.7.0
-tar -xzf /tmp/fangcun-release-2.7.0.tar.gz -C /tmp/fangcun-release-2.7.0
-cd /tmp/fangcun-release-2.7.0
-sudo bash deploy/backup.sh
-sudo bash deploy/install.sh
-sudo bash deploy/verify.sh
+(
+  set -euo pipefail
+  cd /tmp
+  test -f fangcun-release-2.7.0.tar.gz
+  sha256sum --check --ignore-missing fangcun-SHA256SUMS-20260908.txt
+  FANGCUN_STAGE=$(mktemp -d /tmp/fangcun-upgrade.XXXXXX)
+  tar -xzf /tmp/fangcun-release-2.7.0.tar.gz -C "$FANGCUN_STAGE"
+  cd "$FANGCUN_STAGE"
+  sudo bash deploy/backup.sh
+  sudo bash deploy/install.sh
+  sudo bash deploy/verify.sh
+  curl --fail --silent --show-error http://127.0.0.1:18443/app.js | grep 'const APP_BUILD ='
+)
 ```
 
-首次安装没有旧数据库时，直接省略 `backup.sh`。
+最后应看到构建标识 `20260908-calendar-controls`。本次文件名仍含 2.7.0，必须使用本次哈希文件，不要混用 9 月 7 日的旧包或哈希。
+
+首次安装没有旧数据库时省略 `backup.sh`。升级备份保存在 `/var/backups/fangcun/`；现有备份脚本保留最近 30 天。安装脚本保留 `/var/lib/fangcun/` 数据和现有 `/etc/fangcun.env`，不会修改 Cloudflare Tunnel 或安全组。这里不需要配置任何应用商店信息。
+
+部署完成后，在网页关闭再重新打开方寸；有更新提示时确认更新。如果仍显示旧构建，先检查域名侧缓存，不要先清除本机数据。手机需要覆盖安装本次 APK（versionCode 33），原生安全区和浏览器授权失败反馈需要新 APK。仅更新网页不能修复旧壳问题；不要先卸载，以免清掉尚未同步的本机数据。
 
 ### 应用商店生产信息
 

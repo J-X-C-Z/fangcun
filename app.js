@@ -1,5 +1,5 @@
 const APP_VERSION = "2.7.0";
-const APP_BUILD = "20260901-google-calendar-sync";
+const APP_BUILD = "20260908-calendar-controls";
 const STORAGE_KEY = "fangcun-data-v1";
 const THEME_KEY = "fangcun-theme";
 const SYNC_META_KEY = "fangcun-sync-v1";
@@ -462,49 +462,73 @@ function renderCloudPanel() {
   $("#appVersionInfo").textContent = `方寸 v${APP_VERSION} · ${APP_BUILD}${syncState.serverVersion && syncState.serverVersion !== APP_VERSION ? ` · 服务端 v${syncState.serverVersion}` : ""}`;
   $("#deleteAccountSection").classList.toggle("hidden", syncState.user?.role !== "user");
   $("#restoreLocalBtn").disabled = !localStorage.getItem(accountKey(PRE_CLOUD_BACKUP_KEY));
+  const busy = syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing;
+  if (syncState.conflict) $(".sync-recovery").open = true;
+  $("#pullCloudBtn").disabled = Boolean(busy);
+  $("#pushCloudBtn").disabled = Boolean(busy);
 }
 
 async function apiRequest(pathname, options = {}) {
-  const response = await fetch(pathname, {
-    credentials: "same-origin",
-    headers: options.body ? { "Content-Type": "application/json", ...(options.headers || {}) } : options.headers,
-    ...options,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload.error || `请求失败 (${response.status})`);
-    error.status = response.status;
-    error.payload = payload;
+  const { timeoutMs = 20000, ...requestOptions } = options;
+  options = requestOptions;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(pathname, {
+      credentials: "same-origin",
+      headers: options.body ? { "Content-Type": "application/json", ...(options.headers || {}) } : options.headers,
+      ...options,
+      signal: options.signal || controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.error || `请求失败 (${response.status})`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("连接超时，本机内容已保留，请检查网络后重试");
     throw error;
-  }
-  return payload;
+  } finally { clearTimeout(timeout); }
 }
 
 function scheduleCloudSync() {
-  if (!syncState.authenticated || syncState.conflict || syncState.applyingRemote) return;
+  if (!syncState.authenticated || syncState.conflict || syncState.applyingRemote || syncState.pulling || syncState.integrationSyncing || syncMeta().needsChoice) return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => syncToCloud(), 900);
+  syncTimer = setTimeout(() => {
+    if (syncState.reconciling) { scheduleCloudSync(); return; }
+    syncToCloud();
+  }, 900);
 }
 
 async function syncToCloud(force = false) {
-  if (!syncState.authenticated || syncState.syncing) return false;
+  if (!syncState.authenticated || syncState.syncing || syncState.pulling || syncState.integrationSyncing || ((syncState.conflict || syncMeta().needsChoice) && !force)) return false;
+  const syncingAccount = currentUser?.id;
   syncState.syncing = true;
   setCloudIndicator("syncing", "同步中…");
   renderCloudPanel();
   try {
     const meta = syncMeta();
+    const uploadedDocument = JSON.stringify(data);
     const result = await apiRequest(`/api/data${force ? "?force=1" : ""}`, {
       method: "PUT",
-      body: JSON.stringify({ data, baseRevision: meta.revision }),
+      body: JSON.stringify({ data: JSON.parse(uploadedDocument), baseRevision: meta.revision }),
     });
+    if (!syncState.authenticated || currentUser?.id !== syncingAccount) return false;
     syncState.revision = result.revision;
     syncState.updatedAt = result.updatedAt;
     syncState.conflict = false;
-    updateSyncMeta({ revision: result.revision, dirty: false, connectedBefore: true, updatedAt: result.updatedAt });
-    setCloudIndicator("online", "已同步");
+    const changedDuringUpload = JSON.stringify(data) !== uploadedDocument;
+    updateSyncMeta({ revision: result.revision, dirty: changedDuringUpload, needsChoice: false, connectedBefore: true, updatedAt: result.updatedAt });
+    if (changedDuringUpload) scheduleCloudSync();
+    setCloudIndicator(changedDuringUpload ? "syncing" : "online", changedDuringUpload ? "有新修改，继续同步…" : "已同步");
     renderCloudPanel();
     return true;
   } catch (error) {
+    if (currentUser?.id !== syncingAccount) return false;
+    syncState.lastError = error.message;
     if (error.status === 409) {
       syncState.conflict = true;
       syncState.revision = error.payload?.revision || syncState.revision;
@@ -521,6 +545,7 @@ async function syncToCloud(force = false) {
     return false;
   } finally {
     syncState.syncing = false;
+    renderCloudPanel();
   }
 }
 
@@ -540,7 +565,7 @@ function applyCloudData(remote) {
   syncState.revision = remote.revision;
   syncState.updatedAt = remote.updatedAt;
   syncState.conflict = false;
-  updateSyncMeta({ revision: remote.revision, dirty: migratedSchedule, connectedBefore: true, updatedAt: remote.updatedAt });
+  updateSyncMeta({ revision: remote.revision, dirty: migratedSchedule, needsChoice: false, connectedBefore: true, updatedAt: remote.updatedAt });
   renderAll();
   syncNativeReminders();
   scheduleNativeCalendarSync();
@@ -550,11 +575,29 @@ function applyCloudData(remote) {
 }
 
 async function reconcileCloud() {
+  if (syncMeta().needsChoice) {
+    syncState.conflict = true;
+    setCloudIndicator("error", "恢复备份后请选择版本");
+    renderCloudPanel();
+    return false;
+  }
+  if (syncState.reconciling || syncState.syncing || syncState.pulling || syncState.integrationSyncing || syncState.conflict) return false;
+  const reconcilingAccount = currentUser?.id;
+  syncState.reconciling = true;
+  clearTimeout(syncTimer);
   try {
+    const documentBeforeFetch = JSON.stringify(data);
     const remote = await fetchCloudState();
+    if (!syncState.authenticated || currentUser?.id !== reconcilingAccount) return false;
     const meta = syncMeta();
     syncState.revision = remote.revision;
     syncState.updatedAt = remote.updatedAt;
+    if (JSON.stringify(data) !== documentBeforeFetch && remote.revision !== meta.revision) {
+      syncState.conflict = true;
+      setCloudIndicator("error", "两端均有修改");
+      renderCloudPanel();
+      return;
+    }
     if (!remote.data) {
       updateSyncMeta({ revision: 0, connectedBefore: true });
       await syncToCloud();
@@ -583,7 +626,47 @@ async function reconcileCloud() {
   } catch (error) {
     setCloudIndicator("error", "离线，使用本机");
     renderCloudPanel();
+    syncState.lastError = error.message;
+  } finally { syncState.reconciling = false; renderCloudPanel(); }
+}
+
+async function syncNow() {
+  if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) return showToast("正在同步，请稍候");
+  if (!syncState.authenticated) return showToast("请先登录后同步");
+  const button = $("#syncNowBtn");
+  button.disabled = true;
+  button.textContent = "正在同步…";
+  syncState.lastError = "";
+  try {
+    await reconcileCloud();
+    showToast(syncState.lastError || (syncState.conflict ? "两端都有修改，请展开“版本冲突与恢复”选择保留的数据" : syncMeta().dirty ? "本机仍有待上传内容，将继续重试" : "已同步到最新数据"));
+  } finally { button.disabled = false; button.textContent = "立即同步"; }
+}
+
+function closeSidebar() {
+  $("#sidebar").classList.remove("open");
+  $("#mobileMenu").setAttribute("aria-expanded", "false");
+}
+
+function selectDataHubTab(tab) {
+  if (!["account", "calendar", "files"].includes(tab)) tab = "account";
+  $$("[data-sync-panel]").forEach((panel) => panel.classList.toggle("hidden", panel.dataset.syncPanel !== tab));
+  $$("[data-sync-tab]").forEach((button) => {
+    button.setAttribute("aria-selected", String(button.dataset.syncTab === tab));
+    button.classList.toggle("active", button.dataset.syncTab === tab);
+  });
+  $("#cloudModal").scrollTop = 0;
+  if (tab === "account") renderCloudPanel();
+  if (tab === "calendar") {
+    loadCalendarSubscription(); loadOutlookStatus(); loadGoogleStatus(); updateSystemCalendarStatus();
   }
+  if (tab === "files") $("#undoScheduleImportBtn").classList.toggle("hidden", !data.settings.lastScheduleImportUndo);
+}
+
+function openDataHub(tab = "account") {
+  closeSidebar();
+  selectDataHubTab(tab);
+  if (!$("#cloudModal").open) $("#cloudModal").showModal();
 }
 
 function switchAccount(user) {
@@ -734,30 +817,42 @@ async function submitCloudAuth(event) {
 }
 
 async function pullCloudData() {
+  if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) return showToast("正在同步，请完成后再选择版本");
   if (!confirm("用云端数据替换本机数据吗？当前本机数据会自动保留一份恢复副本。")) return;
+  clearTimeout(syncTimer);
+  syncState.pulling = true;
+  const pullingAccount = currentUser?.id;
+  renderCloudPanel();
   try {
+    const localBeforePull = JSON.stringify(data);
     const remote = await fetchCloudState();
+    if (!syncState.authenticated || currentUser?.id !== pullingAccount) return;
     if (!remote.data) return showToast("云端还没有数据");
+    if (JSON.stringify(data) !== localBeforePull) return showToast("下载期间本机有新修改，未覆盖，请重新确认版本");
     applyCloudData(remote);
     showToast("已下载云端数据");
   } catch (error) {
     showToast(error.message);
-  }
+  } finally { syncState.pulling = false; renderCloudPanel(); }
 }
 
 async function pushCloudData() {
+  if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) return showToast("正在同步，请完成后再选择版本");
   if (!confirm("确定用这台设备的数据覆盖云端吗？服务器会保留最近版本快照。")) return;
   const ok = await syncToCloud(true);
   if (ok) showToast("本机数据已写入云端");
+  else showToast(syncState.lastError || "未能上传，本机数据已保留");
 }
 
 function restorePreCloudData() {
+  if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) return showToast("正在同步，请完成后再恢复副本");
   try {
     const backup = JSON.parse(localStorage.getItem(accountKey(PRE_CLOUD_BACKUP_KEY)) || "null");
     const restored = normalizeData(backup?.data);
     if (!restored) return showToast("没有可恢复的本机副本");
     if (!confirm("恢复被云端数据替换前的本机版本吗？恢复后需要再决定是否覆盖云端。")) return;
     syncState.conflict = true;
+    updateSyncMeta({ needsChoice: true });
     data = restored;
     saveData();
     setCloudIndicator("error", "选择同步版本");
@@ -769,6 +864,7 @@ function restorePreCloudData() {
 }
 
 async function logoutCloud() {
+  clearTimeout(syncTimer);
   try { await apiRequest("/api/auth/logout", { method: "POST" }); } catch {}
   syncState.authenticated = false;
   syncState.conflict = false;
@@ -1102,7 +1198,7 @@ function renderListRow(task, mode) {
   if (info) detailParts.push(info.name);
   if (!detailParts.length) detailParts.push("尚未设置日期和分类");
   return `<div class="list-row" data-task-id="${task.id}">
-    <button class="complete-btn" data-complete-id="${task.id}" aria-label="${task.completed ? "恢复" : "完成"}事项" ${task.completed ? 'style="background:var(--q2);border-color:var(--q2)"' : ""}></button>
+    <button class="complete-btn" data-complete-id="${task.id}" data-complete-to="${!task.completed}" aria-label="${task.completed ? "恢复" : "完成"}事项" ${task.completed ? 'style="background:var(--q2);border-color:var(--q2)"' : ""}></button>
     <div class="list-main"><strong style="${task.completed ? "text-decoration:line-through;opacity:.55" : ""}">${escapeHTML(task.title)}</strong><span>${escapeHTML(detailParts.join(" · "))}</span></div>
     <div class="row-actions">${mode === "inbox" ? `<button class="classify-button" data-inbox-reparse="${task.id}">重新识别</button>` : info ? `<span class="meta-tag" style="color:${info.color}">${info.action}</span>` : ""}</div>
   </div>`;
@@ -1407,18 +1503,19 @@ function renderWeekCalendar(start) {
   const { timed, allDay } = weekCalendarModel(start);
   const startMinute = 7 * 60;
   const endMinute = 23 * 60;
-  let html = '<div class="calendar-week-grid"><div class="calendar-week-corner">全天</div>';
+  const hasAllDay = allDay.some((items) => items.length);
+  let html = `<div class="calendar-week-grid ${hasAllDay ? "" : "no-all-day"}"><div class="calendar-week-corner">${hasAllDay ? "全天" : "时间"}</div>`;
   for (let day = 0; day < 7; day += 1) {
     const date = addDays(start, day);
     const key = localISO(date);
-    html += `<button type="button" class="calendar-week-head ${key === localISO() ? "today" : ""}" data-calendar-date="${key}" style="grid-column:${day + 2};grid-row:1"><strong>${weekdays[day]}</strong><span>${date.getMonth() + 1}/${date.getDate()}</span></button>`;
+    html += `<button type="button" class="calendar-week-head ${key === localISO() ? "today" : ""}" data-calendar-date="${key}" data-calendar-past-date="${key}" style="grid-column:${day + 2};grid-row:1"><strong>${weekdays[day]}</strong><span>${date.getMonth() + 1}/${date.getDate()}</span></button>`;
     html += `<div class="calendar-all-day" data-calendar-all-day="${key}" style="grid-column:${day + 2};grid-row:2">${allDay[day].slice(0, 3).map((item) => `<button type="button" class="calendar-all-day-item ${item.kind}" data-task-id="${item.id}">${escapeHTML(item.title)}</button>`).join("")}${allDay[day].length > 3 ? `<span>＋${allDay[day].length - 3}</span>` : ""}</div>`;
   }
   for (let minute = startMinute; minute < endMinute; minute += 30) {
     const row = 3 + (minute - startMinute) / 30;
     if (minute % 60 === 0) html += `<div class="calendar-hour" style="grid-column:1;grid-row:${row}/span 2">${minutesLabel(minute)}</div>`;
     for (let day = 0; day < 7; day += 1) {
-      html += `<button type="button" class="calendar-time-cell" data-calendar-slot-date="${localISO(addDays(start, day))}" data-calendar-slot-time="${minutesLabel(minute)}" aria-label="${localISO(addDays(start, day))} ${minutesLabel(minute)} 新建日程" style="grid-column:${day + 2};grid-row:${row}"></button>`;
+      html += `<button type="button" class="calendar-time-cell" data-calendar-past-date="${localISO(addDays(start, day))}" data-calendar-slot-date="${localISO(addDays(start, day))}" data-calendar-slot-time="${minutesLabel(minute)}" aria-label="${localISO(addDays(start, day))} ${minutesLabel(minute)} 新建日程" style="grid-column:${day + 2};grid-row:${row}"></button>`;
     }
   }
   timed.forEach((item) => {
@@ -1428,10 +1525,74 @@ function renderWeekCalendar(start) {
     const row = 3 + Math.floor((visibleStart - startMinute) / 30);
     const span = Math.max(1, Math.ceil((visibleEnd - visibleStart) / 30));
     const attribute = item.kind === "course" ? `data-course-id="${item.id}"` : `data-task-id="${item.id}"`;
-    html += `<button type="button" class="calendar-week-event ${item.kind}" ${attribute} style="grid-column:${item.day + 2};grid-row:${row}/span ${span};${item.color ? `--event-color:${item.color};` : ""}"><time>${minutesLabel(item.start)}</time><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.detail || "")}</span></button>`;
+    const endAt = new Date(addDays(start, item.day));
+    endAt.setHours(0, item.end, 0, 0);
+    html += `<button type="button" class="calendar-week-event ${item.kind}" ${attribute} data-calendar-end="${endAt.getTime()}" style="grid-column:${item.day + 2};grid-row:${row}/span ${span};${item.color ? `--event-color:${item.color};` : ""}"><time>${minutesLabel(item.start)}</time><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.detail || "")}</span></button>`;
   });
   html += "</div>";
   $("#weekCalendar").innerHTML = html;
+}
+
+function refreshCalendarPast(now = new Date()) {
+  const today = localISO(now);
+  $$("[data-calendar-past-date]").forEach((element) => element.classList.toggle("past", element.dataset.calendarPastDate < today));
+  $$("[data-calendar-end]").forEach((element) => element.classList.toggle("past", Number(element.dataset.calendarEnd) < now.getTime()));
+  $$(".month-day[data-calendar-date]").forEach((element) => element.classList.toggle("past", element.dataset.calendarDate < today));
+}
+
+function calendarZoomValue() {
+  const value = Number(localStorage.getItem(accountKey("fangcun-calendar-zoom")));
+  return Number.isFinite(value) && value >= 0.35 && value <= 1.8 ? value : 0.8;
+}
+
+function applyCalendarZoom(value = calendarZoomValue(), anchor = null) {
+  const zoom = Math.max(0.35, Math.min(1.8, value));
+  const wrap = $(".schedule-board-wrap");
+  const old = Number(wrap.dataset.zoom) || calendarZoomValue();
+  const center = anchor || { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2 };
+  const left = wrap.scrollLeft, top = wrap.scrollTop;
+  wrap.dataset.zoom = String(zoom);
+  wrap.style.setProperty("--calendar-scale", zoom);
+  wrap.style.setProperty("--calendar-step", Math.max(14, 28 * zoom) + "px");
+  wrap.style.setProperty("--calendar-day-width", (120 * zoom) + "px");
+  wrap.style.setProperty("--calendar-slot-height", (48 * zoom) + "px");
+  if (anchor) {
+    wrap.scrollLeft = (left + center.x) * zoom / old - center.x;
+    wrap.scrollTop = (top + center.y) * zoom / old - center.y;
+  }
+  $("#calendarZoomFit").textContent = Math.round(zoom * 100) + "%";
+  $("#calendarZoomFit").setAttribute("aria-label", "当前缩放 " + Math.round(zoom * 100) + "%，点击适应屏幕宽度");
+  $("#calendarZoomOut").disabled = zoom <= 0.35;
+  $("#calendarZoomIn").disabled = zoom >= 1.8;
+  localStorage.setItem(accountKey("fangcun-calendar-zoom"), String(zoom));
+}
+
+function initCalendarZoom() {
+  const wrap = $(".schedule-board-wrap");
+  $("#calendarZoomOut").addEventListener("click", () => applyCalendarZoom(calendarZoomValue() - 0.1, { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2 }));
+  $("#calendarZoomIn").addEventListener("click", () => applyCalendarZoom(calendarZoomValue() + 0.1, { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2 }));
+  $("#calendarZoomFit").addEventListener("click", () => { applyCalendarZoom((wrap.clientWidth - 44) / (7 * 120)); wrap.scrollLeft = 0; });
+  let pinch = null;
+  const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  wrap.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 2 || !["week", "timetable"].includes(scheduleMode)) return;
+    event.preventDefault();
+    pinch = { distance: distance(event.touches), zoom: calendarZoomValue() };
+  }, { passive: false });
+  wrap.addEventListener("touchmove", (event) => {
+    if (!pinch || event.touches.length !== 2) return;
+    event.preventDefault();
+    const rect = wrap.getBoundingClientRect();
+    applyCalendarZoom(pinch.zoom * distance(event.touches) / Math.max(1, pinch.distance), { x: (event.touches[0].clientX + event.touches[1].clientX) / 2 - rect.left, y: (event.touches[0].clientY + event.touches[1].clientY) / 2 - rect.top });
+  }, { passive: false });
+  const end = () => { pinch = null; };
+  wrap.addEventListener("touchend", end);
+  wrap.addEventListener("touchcancel", end);
+  wrap.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey || !["week", "timetable"].includes(scheduleMode)) return;
+    event.preventDefault();
+    applyCalendarZoom(calendarZoomValue() + (event.deltaY < 0 ? 0.05 : -0.05), { x: event.offsetX, y: event.offsetY });
+  }, { passive: false });
 }
 
 function renderSchedule() {
@@ -1514,6 +1675,9 @@ function renderSchedule() {
   $("#courseAgenda").classList.add("hidden");
   $("#weekDeadlines").classList.toggle("hidden", scheduleMode !== "timetable");
   $$("[data-schedule-mode]").forEach((button) => button.classList.toggle("active", button.dataset.scheduleMode === scheduleMode));
+  $(".calendar-zoom-tools").classList.toggle("hidden", !["week", "timetable"].includes(scheduleMode));
+  applyCalendarZoom();
+  refreshCalendarPast();
 }
 
 function projectMetrics(project) {
@@ -1603,8 +1767,12 @@ function renderDailyTip() {
   $("#dailyTipAction").dataset.tipView = tip.view;
 }
 
+let dynamicEventsController;
 function bindDynamicEvents() {
-  $$('[data-focus-pin]').forEach((button) => button.addEventListener("click", (event) => {
+  dynamicEventsController?.abort();
+  dynamicEventsController = new AbortController();
+  const listen = (target, type, handler) => target.addEventListener(type, handler, { signal: dynamicEventsController.signal });
+  $$('[data-focus-pin]').forEach((button) => listen(button, "click", (event) => {
     event.stopPropagation();
     const task = data.tasks.find((item) => item.id === button.dataset.focusPin);
     if (!task) return;
@@ -1612,7 +1780,7 @@ function bindDynamicEvents() {
     saveData();
     showToast(task.focusPinned ? "已固定到今日专注" : "已取消固定");
   }));
-  $$('[data-focus-dismiss]').forEach((button) => button.addEventListener("click", (event) => {
+  $$('[data-focus-dismiss]').forEach((button) => listen(button, "click", (event) => {
     event.stopPropagation();
     const task = data.tasks.find((item) => item.id === button.dataset.focusDismiss);
     if (!task) return;
@@ -1620,18 +1788,18 @@ function bindDynamicEvents() {
     saveData();
     showToast("今天先不推荐这件事");
   }));
-  $$('[data-inbox-reparse]').forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); reparseInboxTask(button.dataset.inboxReparse); }));
-  $$('[data-calendar-slot-date]').forEach((button) => button.addEventListener("click", () => {
+  $$('[data-inbox-reparse]').forEach((button) => listen(button, "click", (event) => { event.stopPropagation(); reparseInboxTask(button.dataset.inboxReparse); }));
+  $$('[data-calendar-slot-date]').forEach((button) => listen(button, "click", () => {
     const start = button.dataset.calendarSlotTime;
     const endMinutes = timeMinutes(start) + 60;
     openTaskModal("", null, { type: "event", startDate: button.dataset.calendarSlotDate, startTime: start, endDate: button.dataset.calendarSlotDate, endTime: minutesLabel(endMinutes), reminderMinutes: 10 });
   }));
-  $$('[data-calendar-all-day]').forEach((element) => element.addEventListener("click", (event) => {
+  $$('[data-calendar-all-day]').forEach((element) => listen(element, "click", (event) => {
     if (event.target.closest('[data-task-id]')) return;
     openTaskModal("", null, { type: "event", startDate: element.dataset.calendarAllDay });
   }));
-  $$("[data-day-date]").forEach((button) => button.addEventListener("click", () => { displayedDay = button.dataset.dayDate; scheduleMode = "day"; renderAll(); }));
-  $$("[data-calendar-date]").forEach((element) => element.addEventListener("click", (event) => {
+  $$("[data-day-date]").forEach((button) => listen(button, "click", () => { displayedDay = button.dataset.dayDate; scheduleMode = "day"; renderAll(); }));
+  $$("[data-calendar-date]").forEach((element) => listen(element, "click", (event) => {
     if (event.target.closest("[data-task-id], [data-course-id]") || event.currentTarget !== element) return;
     displayedDay = element.dataset.calendarDate;
     const selected = dateFromISO(displayedDay);
@@ -1643,26 +1811,28 @@ function bindDynamicEvents() {
     renderAll();
   }));
   $$("[data-task-id]").forEach((element) => {
-    element.addEventListener("click", (event) => {
+    listen(element, "click", (event) => {
       if (event.target.closest("[data-complete-id], [data-focus-pin], [data-focus-dismiss], [data-inbox-reparse]")) return;
       event.stopPropagation();
       openTaskModal(element.dataset.taskId);
     });
   });
   $$("[data-complete-id]").forEach((button) => {
-    button.addEventListener("click", (event) => {
+    listen(button, "click", (event) => {
       event.stopPropagation();
-      toggleComplete(button.dataset.completeId);
+      if (button.disabled) return;
+      button.disabled = true;
+      toggleComplete(button.dataset.completeId, button.dataset.completeTo !== "false");
     });
   });
   $$(".task-card").forEach((card) => {
-    card.addEventListener("dragstart", () => {
+    listen(card, "dragstart", () => {
       card.classList.add("dragging");
       window.draggedTaskId = card.dataset.taskId;
     });
-    card.addEventListener("dragend", () => card.classList.remove("dragging"));
+    listen(card, "dragend", () => card.classList.remove("dragging"));
   });
-  $$("[data-project-id]").forEach((card) => card.addEventListener("click", (event) => {
+  $$("[data-project-id]").forEach((card) => listen(card, "click", (event) => {
     const milestoneButton = event.target.closest("[data-project-milestone]");
     if (milestoneButton) {
       event.stopPropagation();
@@ -1672,7 +1842,7 @@ function bindDynamicEvents() {
       return;
     }
     const taskButton = event.target.closest("[data-project-task-complete]");
-    if (taskButton) { event.stopPropagation(); toggleComplete(taskButton.dataset.projectTaskComplete); return; }
+    if (taskButton) { event.stopPropagation(); toggleComplete(taskButton.dataset.projectTaskComplete, true); return; }
     const editButton = event.target.closest("[data-project-edit]");
     if (editButton) { event.stopPropagation(); openProjectModal(editButton.dataset.projectEdit); return; }
     const nextButton = event.target.closest("[data-project-next]");
@@ -1685,23 +1855,23 @@ function bindDynamicEvents() {
     openProjectModal(card.dataset.projectId);
   }));
   $$("[data-course-id]").forEach((element) => {
-    element.addEventListener("click", (event) => {
+    listen(element, "click", (event) => {
       event.stopPropagation();
       openCourseModal(element.dataset.courseId);
     });
     if (element.classList.contains("course-block")) {
-      element.addEventListener("dragstart", (event) => {
+      listen(element, "dragstart", (event) => {
         window.draggedCourseId = element.dataset.courseId;
         event.dataTransfer.effectAllowed = "move";
         element.classList.add("dragging");
       });
-      element.addEventListener("dragend", () => element.classList.remove("dragging"));
+      listen(element, "dragend", () => element.classList.remove("dragging"));
     }
   });
   $$("[data-course-drop-day]").forEach((cell) => {
-    cell.addEventListener("dragover", (event) => { event.preventDefault(); cell.classList.add("drag-over"); });
-    cell.addEventListener("dragleave", () => cell.classList.remove("drag-over"));
-    cell.addEventListener("drop", (event) => {
+    listen(cell, "dragover", (event) => { event.preventDefault(); cell.classList.add("drag-over"); });
+    listen(cell, "dragleave", () => cell.classList.remove("drag-over"));
+    listen(cell, "drop", (event) => {
       event.preventDefault();
       cell.classList.remove("drag-over");
       const course = courseById(window.draggedCourseId);
@@ -1731,6 +1901,8 @@ function renderAll() {
 
 function showToast(message) {
   const toast = $("#toast");
+  const host = $$("dialog[open]").at(-1) || document.body;
+  if (typeof host.appendChild === "function" && toast.parentElement !== host) host.appendChild(toast);
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(toastTimer);
@@ -1741,6 +1913,8 @@ function switchView(view) {
   if (!viewInfo[view] || !$(`#${view}View`)) view = "today";
   const enteringSchedule = view === "schedule" && activeView !== "schedule";
   activeView = view;
+  const menuHost = view === "schedule" ? $(".week-toolbar") : $(".topbar");
+  if (typeof menuHost.prepend === "function") menuHost.prepend($("#mobileMenu"));
   document.body.dataset.activeView = view;
   $$(".view").forEach((element) => element.classList.remove("active"));
   $(`#${view}View`).classList.add("active");
@@ -1940,10 +2114,12 @@ function createNextOccurrence(task) {
   return nextTask;
 }
 
-function toggleComplete(id) {
+function toggleComplete(id, desiredState) {
   const task = data.tasks.find((item) => item.id === id);
   if (!task) return;
-  task.completed = !task.completed;
+  const nextState = typeof desiredState === "boolean" ? desiredState : !task.completed;
+  if (task.completed === nextState) return;
+  task.completed = nextState;
   task.completedAt = task.completed ? Date.now() : null;
   const next = task.completed ? createNextOccurrence(task) : null;
   saveData();
@@ -2067,7 +2243,7 @@ function renderSmartCapturePreview() {
   $("#smartCapturePreview").innerHTML = smartDrafts.map((draft, index) => {
     const issues = draft.issues || [];
     const status = issues.length ? `${issues.length} 项待确认` : "可直接添加";
-    const commonHeader = `<header><span>${labels[draft.kind] || "内容"}</span><em class="${issues.length ? "uncertain" : "resolved"}">${status}</em></header>`;
+    const commonHeader = `<header><span>${labels[draft.kind] || "内容"}</span><em class="${issues.length ? "uncertain" : "resolved"}">${status}</em></header>${draft.timeSuggestion ? `<p class="smart-time-suggestion">建议安排：${escapeHTML(draft.startDate || draft.due || "")} ${escapeHTML(draft.startTime || draft.dueTime || "")}。原文“${escapeHTML(draft.timeSuggestion.label)}”${draft.timeSuggestion.rangeEnd && draft.timeSuggestion.rangeEnd !== draft.timeSuggestion.rangeStart ? `涵盖 ${escapeHTML(draft.timeSuggestion.rangeStart)} 至 ${escapeHTML(draft.timeSuggestion.rangeEnd)}` : "没有指定精确时刻"}，可修改，确认添加即采用建议。</p>` : ""}${draft.originalText ? `<details class="smart-original"><summary>查看原文 / 恢复标题</summary><p>${escapeHTML(draft.originalText)}</p><button type="button" class="secondary-button" data-smart-original="${index}">用原文作标题</button></details>` : ""}`;
     if (draft.kind === "task") {
       const quadrant = classify(draft.important, draft.urgent) || "";
       const isEvent = draft.type === "event";
@@ -2075,7 +2251,7 @@ function renderSmartCapturePreview() {
       return `<article class="smart-preview-card ${issues.length ? "has-issues" : ""}" data-smart-index="${index}">${commonHeader}<div class="smart-field-grid">
         <label class="smart-field wide"><span>事项</span><input data-smart-field="title" value="${escapeHTML(draft.title)}" /></label>
         <label class="smart-field"><span>类型</span><select data-smart-field="type">${typeOptions}</select></label>
-        ${isEvent ? `<label class="smart-field"><span>开始日期</span><input type="date" data-smart-field="startDate" value="${escapeHTML(draft.startDate || "")}" /></label><label class="smart-field"><span>开始时间</span><input type="time" data-smart-field="startTime" value="${escapeHTML(draft.startTime || "")}" /></label><label class="smart-field"><span>结束时间</span><input type="time" data-smart-field="endTime" value="${escapeHTML(draft.endTime || "")}" /></label><label class="smart-field"><span>地点</span><input data-smart-field="location" value="${escapeHTML(draft.location || "")}" placeholder="教室、会议室或地址" /></label>` : `<label class="smart-field"><span>日期 / DDL</span><input type="date" data-smart-field="due" value="${escapeHTML(draft.due || "")}" /></label><label class="smart-field"><span>时间</span><input type="time" data-smart-field="dueTime" value="${escapeHTML(draft.dueTime || "")}" /></label>`}
+        ${isEvent ? `<label class="smart-field"><span>开始日期</span><input type="date" data-smart-field="startDate" value="${escapeHTML(draft.startDate || "")}" /></label><label class="smart-field"><span>开始时间</span><input type="time" data-smart-field="startTime" value="${escapeHTML(draft.startTime || "")}" /></label><label class="smart-field"><span>结束日期</span><input type="date" data-smart-field="endDate" value="${escapeHTML(draft.endDate || draft.startDate || "")}" /></label><label class="smart-field"><span>结束时间</span><input type="time" data-smart-field="endTime" value="${escapeHTML(draft.endTime || "")}" /></label><label class="smart-field"><span>地点</span><input data-smart-field="location" value="${escapeHTML(draft.location || "")}" placeholder="教室、会议室或地址" /></label>` : `<label class="smart-field"><span>日期 / DDL</span><input type="date" data-smart-field="due" value="${escapeHTML(draft.due || "")}" /></label><label class="smart-field"><span>时间</span><input type="time" data-smart-field="dueTime" value="${escapeHTML(draft.dueTime || "")}" /></label>`}
         <label class="smart-field"><span>优先级</span><select data-smart-field="quadrant"><option value="">待确认</option>${quadrantOptions}</select></label>
         <label class="smart-field"><span>预计时长</span><input type="number" min="0" step="5" data-smart-field="estimateMinutes" value="${draft.estimateMinutes || ""}" placeholder="分钟" /></label>
         <label class="smart-field"><span>关联课程</span><select data-smart-field="courseId"><option value="">无课程</option>${courseOptions}</select></label>
@@ -2104,12 +2280,18 @@ function updateSmartDraftField(event) {
   const draft = smartDrafts[Number(card.dataset.smartIndex)];
   const field = control.dataset.smartField;
   if (!draft) return;
+  const previousValue = draft[field];
   if (field === "quadrant") {
     Object.assign(draft, decisionForQuadrant(control.value));
   } else if (["day", "startSection", "endSection", "estimateMinutes"].includes(field)) draft[field] = Math.max(0, Number(control.value) || 0);
   else draft[field] = control.value.trim();
   if (field === "title") draft.title = control.value.trim();
   if (field === "name") { draft.name = control.value.trim(); draft.title = draft.name; }
+  if (field === "startDate" && (!draft.endDate || draft.endDate === previousValue)) {
+    draft.endDate = draft.startDate;
+    const endDateInput = card.querySelector('[data-smart-field="endDate"]');
+    if (endDateInput) endDateInput.value = draft.endDate;
+  }
   if (field === "type") {
     if (draft.type === "event" && !draft.startDate && draft.due) { draft.startDate = draft.due; draft.startTime = draft.dueTime; draft.due = ""; draft.dueTime = ""; }
     if (draft.type !== "event" && !draft.due && draft.startDate) { draft.due = draft.startDate; draft.dueTime = draft.startTime; }
@@ -2118,7 +2300,7 @@ function updateSmartDraftField(event) {
   const resolved = field === "quadrant" ? Boolean(control.value) : Boolean(control.value);
   if (resolved) draft.issues = (draft.issues || []).filter((issue) => issue.field !== issueField);
   draft.confidence = draft.issues?.length ? "needs-confirmation" : "high";
-  renderSmartCapturePreview();
+  if (field === "type") renderSmartCapturePreview();
 }
 
 function addSmartDraft(draft) {
@@ -2137,13 +2319,17 @@ function addSmartDraft(draft) {
     }
     return;
   }
-  const confirmationIssues = draft.issues || [];
+  const confirmationIssues = (draft.issues || []).filter((issue) => issue.field !== "timeSuggestion");
+  draft.notes = draft.originalText ? [draft.notes, "原始输入：" + draft.originalText, draft.timeSuggestion ? "模糊时间：" + draft.timeSuggestion.label + "（已确认建议或修改后的时间）" : ""].filter(Boolean).join("\n") : draft.notes;
   const quadrant = confirmationIssues.length ? null : classify(draft.important ?? null, draft.urgent ?? null);
-  data.tasks.unshift({ id: uid(), title: draft.title, notes: draft.notes || "", due: draft.due || "", dueTime: draft.dueTime || "", startDate: draft.startDate || "", startTime: draft.startTime || "", endDate: draft.endDate || "", endTime: draft.endTime || "", reminderMinutes: draft.reminderMinutes ?? -1, estimateMinutes: draft.estimateMinutes || 0, projectId: draft.projectId || "", courseId: draft.courseId || "", type: draft.type || "task", repeat: draft.repeat || "none", important: draft.important ?? null, urgent: draft.urgent ?? null, quadrant, today: Boolean(draft.today), source: "natural-language", confirmationIssues, completed: false, createdAt: Date.now() });
+  data.tasks.unshift({ id: uid(), title: draft.title, notes: draft.notes || "", location: draft.location || "", originalText: draft.originalText || "", timeSuggestion: draft.timeSuggestion || null, due: draft.due || "", dueTime: draft.dueTime || "", startDate: draft.startDate || "", startTime: draft.startTime || "", endDate: draft.endDate || "", endTime: draft.endTime || "", reminderMinutes: draft.reminderMinutes ?? -1, estimateMinutes: draft.estimateMinutes || 0, projectId: draft.projectId || "", courseId: draft.courseId || "", type: draft.type || "task", repeat: draft.repeat || "none", important: draft.important ?? null, urgent: draft.urgent ?? null, quadrant, today: Boolean(draft.today), source: "natural-language", confirmationIssues, completed: false, createdAt: Date.now() });
 }
 
 function confirmSmartCapture(event) {
   event.preventDefault();
+  if (smartDrafts.some((draft) => !String(draft.title || draft.name || "").trim())) return showToast("请填写事项标题");
+  const invalidEnd = smartDrafts.some((draft) => draft.startDate && draft.startTime && draft.endTime && new Date((draft.endDate || draft.startDate) + "T" + draft.endTime) <= new Date(draft.startDate + "T" + draft.startTime));
+  if (invalidEnd) return showToast("结束时间需要晚于开始时间，跨天日程请调整结束日期");
   const unavailableCourse = smartDrafts.find((draft) => draft.kind === "course" && (!slotByNumber(draft.startSection) || !slotByNumber(draft.endSection)));
   if (unavailableCourse) return showToast(`课表还没有第 ${unavailableCourse.endSection} 节，请先在学期设置中应用 13 节模板`);
   try {
@@ -2167,7 +2353,7 @@ function editSmartCapture() {
   if (!draft) return;
   $("#smartCaptureModal").close();
   if (draft.kind === "task") {
-    openTaskModal("", null, draft);
+    openTaskModal("", null, { ...draft, notes: [draft.notes, draft.originalText ? "原始输入：" + draft.originalText : ""].filter(Boolean).join("\n") });
     return;
   }
   if (draft.kind === "project") {
@@ -2534,7 +2720,7 @@ function confirmScheduleImport() {
   data.settings.lastScheduleImportUndo = { batchId: pendingScheduleImport.batchId, snapshot, createdAt: Date.now() };
   const source = pendingScheduleImport.source;
   pendingScheduleImport = null;
-  $("#scheduleImportModal").close();
+  $("#cloudModal").close();
   saveData();
   showToast(`${source} 导入完成：新增 ${added}，合并 ${merged}`);
 }
@@ -2608,18 +2794,28 @@ async function importWordSchedule(event) {
 }
 
 function downloadFile(content, filename, type) {
+  if (typeof window.FangcunNative?.saveDocument === "function") {
+    window.FangcunNative.saveDocument(filename, type.split(";")[0], content);
+    showToast("请选择文件保存位置");
+    return;
+  }
+  if (isNativeAndroid()) return showToast("当前 APK 不支持文件保存，请安装本次新版 APK");
   const url = URL.createObjectURL(new Blob([content], { type }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
+  document.body.appendChild(anchor);
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  showToast("已发起下载，请在浏览器下载列表中查看");
 }
+
+window.FangcunDocumentSaved = (error) => showToast(error || "文件已保存到所选位置");
 
 function exportScheduleJson() {
   const payload = { courses: data.courses.map((course) => ({ id: course.id, name: course.name, code: course.code, campus: course.campus, teacher: course.teacher, position: course.location, day: course.day, startSection: course.startSection, endSection: course.endSection, color: course.color, weeks: course.weeks, reminderMinutes: course.reminderMinutes, notes: course.notes })), timeSlots: data.timeSlots, config: { semesterStartDate: data.semester.startDate, semesterTotalWeeks: data.semester.totalWeeks } };
   downloadFile(JSON.stringify(payload, null, 2), `方寸课表-${localISO()}.json`, "application/json");
-  showToast("课表 JSON 已导出");
 }
 
 function icsEscape(value = "") {
@@ -2645,7 +2841,6 @@ function exportIcs() {
   });
   lines.push("END:VCALENDAR");
   downloadFile(lines.join("\r\n"), `方寸课表-${localISO()}.ics`, "text/calendar;charset=utf-8");
-  showToast("ICS 日历已导出");
 }
 
 function renderCalendarSubscription(subscription = {}) {
@@ -2711,153 +2906,144 @@ async function revokeCalendarSubscription() {
   } catch (error) { showToast(error.message); }
 }
 
-function renderOutlookStatus(status = {}) {
-  const label = $("#outlookIntegrationStatus");
-  const detail = $("#outlookSyncDetail");
-  const connect = $("#connectOutlookBtn");
-  const sync = $("#syncOutlookBtn");
-  const disconnect = $("#disconnectOutlookBtn");
-  if (!label || !connect) return;
-  if (!syncState.authenticated) {
-    label.textContent = "请先登录方寸账号；每个用户独立连接自己的 Microsoft 账号。";
-    connect.disabled = true;
-    sync.classList.add("hidden"); disconnect.classList.add("hidden"); detail.classList.add("hidden");
-    return;
-  }
-  if (!status.configured) {
-    label.textContent = "服务器尚未配置 Microsoft 应用注册。请管理员按部署文档填写 4 个环境变量。";
-    connect.disabled = true;
-    sync.classList.add("hidden"); disconnect.classList.add("hidden"); detail.classList.add("hidden");
-    return;
-  }
-  connect.disabled = false;
-  connect.classList.toggle("hidden", Boolean(status.connected));
-  sync.classList.toggle("hidden", !status.connected);
-  disconnect.classList.toggle("hidden", !status.connected);
-  if (!status.connected) {
-    label.textContent = "连接后在 Outlook 中建立独立的“方寸”日历，新增、修改和删除均可双向同步。";
-    detail.classList.add("hidden");
-    return;
-  }
-  label.textContent = `已连接 ${status.account || "Microsoft 账号"} · 自动每 ${status.intervalMinutes || 5} 分钟同步`;
+const integrationUI = {
+  outlook: { name: "Outlook", suffix: "Outlook", status: null, busy: false },
+  google: { name: "Google", suffix: "Google", status: null, busy: false },
+};
+let externalProvider = "";
+function integrationFeedback(provider, message, error = false) {
+  const detail = $("#" + provider + "SyncDetail");
+  detail.textContent = message;
   detail.classList.remove("hidden");
-  detail.textContent = status.lastError
-    ? `最近同步异常：${status.lastError}`
-    : status.lastSyncAt ? `最近同步：${formatSyncTime(status.lastSyncAt)} · Outlook 中请编辑“方寸”日历` : "连接成功，尚未执行首次同步。";
+  detail.classList.toggle("error", error);
+  detail.setAttribute("role", error ? "alert" : "status");
 }
-
-async function loadOutlookStatus() {
-  if (!syncState.authenticated) return renderOutlookStatus({});
-  try { renderOutlookStatus(await apiRequest("/api/integrations/outlook/status")); }
-  catch (error) { renderOutlookStatus({ configured: true, connected: false }); $("#outlookSyncDetail").textContent = error.message; }
-}
-
-async function connectOutlook() {
-  const button = $("#connectOutlookBtn");
-  button.disabled = true;
-  try {
-    const result = await apiRequest("/api/integrations/outlook/connect", { method: "POST", body: JSON.stringify({ source: isNativeAndroid() ? "android" : "web" }) });
-    if (isNativeAndroid() && typeof window.FangcunNative.openExternal === "function") window.FangcunNative.openExternal(result.authUrl);
-    else location.assign(result.authUrl);
-  } catch (error) { showToast(error.message); button.disabled = false; }
-}
-
-async function syncOutlookNow() {
-  const button = $("#syncOutlookBtn");
-  button.disabled = true;
-  try {
-    if (syncMeta().dirty && !(await syncToCloud())) throw new Error("请先完成方寸云端同步");
-    const result = await apiRequest("/api/integrations/outlook/sync", { method: "POST", body: "{}" });
-    const remote = await fetchCloudState();
-    if (remote.data) applyCloudData(remote);
-    await loadOutlookStatus();
-    showToast(`Outlook 同步完成：上传 ${result.stats?.pushed || 0}，拉取 ${result.stats?.pulled || 0}，导入 ${result.stats?.imported || 0}`);
-  } catch (error) { showToast(error.message); await loadOutlookStatus(); }
-  finally { button.disabled = false; }
-}
-
-async function disconnectOutlook() {
-  if (!confirm("断开 Outlook 双向同步吗？Outlook 中现有的“方寸”日历会保留，不会被删除。")) return;
-  try {
-    await apiRequest("/api/integrations/outlook", { method: "DELETE" });
-    await loadOutlookStatus();
-    showToast("已断开 Outlook；远端日历仍保留");
-  } catch (error) { showToast(error.message); }
-}
-
-function renderGoogleStatus(status = {}) {
-  const label = $("#googleIntegrationStatus");
-  const detail = $("#googleSyncDetail");
-  const connect = $("#connectGoogleBtn");
-  const sync = $("#syncGoogleBtn");
-  const disconnect = $("#disconnectGoogleBtn");
-  if (!label || !connect) return;
+function renderIntegrationStatus(provider, status = {}) {
+  const ui = integrationUI[provider];
+  ui.status = status;
+  const label = $("#" + provider + "IntegrationStatus");
+  const connect = $("#connect" + ui.suffix + "Btn");
+  const sync = $("#sync" + ui.suffix + "Btn");
+  const disconnect = $("#disconnect" + ui.suffix + "Btn");
+  const connected = Boolean(status.connected && syncState.authenticated);
+  connect.classList.toggle("hidden", connected);
+  sync.classList.toggle("hidden", !connected);
+  disconnect.classList.toggle("hidden", !connected);
+  connect.disabled = sync.disabled = disconnect.disabled = ui.busy;
   if (!syncState.authenticated) {
-    label.textContent = "请先登录方寸账号；每个用户独立连接自己的 Google 账号。";
-    connect.disabled = true;
-    sync.classList.add("hidden"); disconnect.classList.add("hidden"); detail.classList.add("hidden");
-    return;
+    label.textContent = "需要先登录方寸账号，再连接自己的 " + ui.name + " 账号。";
+    connect.textContent = "查看登录要求";
+  } else if (status.error) {
+    label.textContent = "暂时无法检查连接状态";
+    connect.textContent = "重试检查";
+    integrationFeedback(provider, status.error, true);
+  } else if (!status.configured) {
+    label.textContent = ui.name + " 尚未配置，点击查看需要的配置；账号同步与文件备份仍可用。";
+    connect.textContent = "查看配置要求";
+  } else if (!connected) {
+    label.textContent = "连接后使用独立的“方寸”日历，支持新增、修改、删除和提醒双向同步。";
+    connect.textContent = "连接 " + ui.name;
+  } else {
+    label.textContent = "已连接 " + (status.account || ui.name + " 账号") + " · 自动每 " + (status.intervalMinutes || 5) + " 分钟同步";
+    sync.textContent = "立即同步";
+    integrationFeedback(provider, status.lastError ? "最近同步异常：" + status.lastError : status.lastSyncAt ? formatSyncTime(status.lastSyncAt) + " · 在 " + ui.name + " 的“方寸”日历中编辑" : "连接成功，尚未执行首次同步。", Boolean(status.lastError));
   }
-  if (!status.configured) {
-    label.textContent = "服务器尚未配置 Google OAuth 应用。请管理员按部署文档填写 3 个环境变量。";
-    connect.disabled = true;
-    sync.classList.add("hidden"); disconnect.classList.add("hidden"); detail.classList.add("hidden");
-    return;
+}
+function renderOutlookStatus(status = {}) { renderIntegrationStatus("outlook", status); }
+function renderGoogleStatus(status = {}) { renderIntegrationStatus("google", status); }
+async function loadIntegrationStatus(provider) {
+  const ui = integrationUI[provider];
+  if (ui.busy) return;
+  if (!syncState.authenticated) return renderIntegrationStatus(provider, {});
+  ui.busy = true;
+  const connect = $("#connect" + ui.suffix + "Btn");
+  connect.disabled = true;
+  connect.textContent = "检查中…";
+  $("#sync" + ui.suffix + "Btn").disabled = $("#disconnect" + ui.suffix + "Btn").disabled = true;
+  $("#" + provider + "IntegrationStatus").textContent = "正在检查账号连接状态…";
+  try {
+    const status = await apiRequest("/api/integrations/" + provider + "/status");
+    ui.busy = false;
+    renderIntegrationStatus(provider, status);
+  } catch (error) {
+    ui.busy = false;
+    renderIntegrationStatus(provider, { error: error.message });
   }
-  connect.disabled = false;
-  connect.classList.toggle("hidden", Boolean(status.connected));
-  sync.classList.toggle("hidden", !status.connected);
-  disconnect.classList.toggle("hidden", !status.connected);
-  if (!status.connected) {
-    label.textContent = "连接后在 Google 中建立独立的“方寸”日历，新增、修改、删除和提醒均可双向同步。";
-    detail.classList.add("hidden");
-    return;
+}
+async function loadOutlookStatus() { return loadIntegrationStatus("outlook"); }
+async function loadGoogleStatus() { return loadIntegrationStatus("google"); }
+
+async function runIntegrationAction(provider, action) {
+  const ui = integrationUI[provider];
+  if (ui.busy) return;
+  if (!syncState.authenticated) return integrationFeedback(provider, "请先在“方寸账号”页登录，再回来连接日历。", true);
+  if (action === "connect" && ui.status?.error) return loadIntegrationStatus(provider);
+  if (action === "connect" && !ui.status?.configured) {
+    const variables = provider === "outlook" ? "MICROSOFT_CLIENT_ID、MICROSOFT_CLIENT_SECRET、MICROSOFT_TENANT、MICROSOFT_REDIRECT_URI" : "GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET、GOOGLE_REDIRECT_URI";
+    return integrationFeedback(provider, "需要管理员在服务器 /etc/fangcun.env 配置 " + variables + "，重启服务后重新打开本页检查。密钥不要填进聊天或前端。", true);
   }
-  label.textContent = `已连接 ${status.account || "Google 账号"} · 自动每 ${status.intervalMinutes || 5} 分钟增量同步`;
-  detail.classList.remove("hidden");
-  detail.textContent = status.lastError
-    ? `最近同步异常：${status.lastError}`
-    : status.lastSyncAt ? `最近同步：${formatSyncTime(status.lastSyncAt)} · Google 中请编辑“方寸”日历` : "连接成功，尚未执行首次同步。";
-}
-
-async function loadGoogleStatus() {
-  if (!syncState.authenticated) return renderGoogleStatus({});
-  try { renderGoogleStatus(await apiRequest("/api/integrations/google/status")); }
-  catch (error) { renderGoogleStatus({ configured: true, connected: false }); $("#googleSyncDetail").textContent = error.message; }
-}
-
-async function connectGoogle() {
-  const button = $("#connectGoogleBtn");
-  button.disabled = true;
+  if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) return integrationFeedback(provider, "另一项同步正在进行，请完成后重试。");
+  if (action === "sync" && (syncState.conflict || syncMeta().needsChoice)) return integrationFeedback(provider, "本机与云端版本尚未确认，请先在“方寸账号”页选择保留版本。", true);
+  if (action === "disconnect" && !confirm("断开 " + ui.name + " 双向同步？外部现有的“方寸”日历会保留。")) return;
+  const button = $("#" + (action === "connect" ? "connect" : action === "sync" ? "sync" : "disconnect") + ui.suffix + "Btn");
+  const originalLabel = button.textContent;
+  ui.busy = true;
+  $("#connect" + ui.suffix + "Btn").disabled = $("#sync" + ui.suffix + "Btn").disabled = $("#disconnect" + ui.suffix + "Btn").disabled = true;
+  button.textContent = action === "sync" ? "同步中…" : action === "connect" ? "连接中…" : "断开中…";
+  integrationFeedback(provider, action === "sync" ? "正在同步本机与 " + ui.name + "，请稍候；完成后这里会显示结果。" : "正在处理 " + ui.name + " 请求…");
+  const account = currentUser?.id;
+  let ownsSync = false;
   try {
-    const result = await apiRequest("/api/integrations/google/connect", { method: "POST", body: JSON.stringify({ source: isNativeAndroid() ? "android" : "web" }) });
-    if (isNativeAndroid() && typeof window.FangcunNative.openExternal === "function") window.FangcunNative.openExternal(result.authUrl);
-    else location.assign(result.authUrl);
-  } catch (error) { showToast(error.message); button.disabled = false; }
+    if (action === "connect") {
+      const result = await apiRequest("/api/integrations/" + provider + "/connect", { method: "POST", body: JSON.stringify({ source: isNativeAndroid() ? "android" : "web" }) });
+      const url = new URL(result.authUrl);
+      const allowed = provider === "google" ? url.hostname === "accounts.google.com" : url.hostname === "login.microsoftonline.com" || url.hostname.endsWith(".microsoftonline.com");
+      if (url.protocol !== "https:" || !allowed) throw new Error("服务器返回了无效的授权地址，请检查日历配置");
+      externalProvider = provider;
+      integrationFeedback(provider, "正在打开系统浏览器完成授权；返回后可再次点击连接。");
+      if (isNativeAndroid() && typeof window.FangcunNative.openExternal === "function") window.FangcunNative.openExternal(url.href);
+      else location.assign(url.href);
+    } else if (action === "disconnect") {
+      await apiRequest("/api/integrations/" + provider, { method: "DELETE" });
+      renderIntegrationStatus(provider, { configured: true, connected: false });
+      integrationFeedback(provider, "已断开；外部日历仍保留。");
+    } else {
+      if (syncMeta().dirty && !(await syncToCloud())) throw new Error(syncState.lastError || "请先完成方寸账号同步");
+      syncState.integrationSyncing = true; ownsSync = true;
+      renderCloudPanel();
+      clearTimeout(syncTimer);
+      const before = JSON.stringify(data);
+      const result = await apiRequest("/api/integrations/" + provider + "/sync", { method: "POST", body: "{}", timeoutMs: 60000 });
+      const remote = await fetchCloudState();
+      if (currentUser?.id !== account || !syncState.authenticated) return;
+      if (JSON.stringify(data) !== before || syncMeta().dirty) {
+        syncState.conflict = true;
+        updateSyncMeta({ needsChoice: true });
+        integrationFeedback(provider, ui.name + " 已处理请求，但期间本机有新修改，未覆盖本机；请到“方寸账号”页确认版本。", true);
+        renderCloudPanel();
+      } else {
+        if (remote.data) applyCloudData(remote);
+        integrationFeedback(provider, "同步完成 · 上传 " + (result.stats?.pushed || 0) + " · 拉取 " + (result.stats?.pulled || 0) + " · 导入 " + (result.stats?.imported || 0) + " · " + new Date().toLocaleTimeString("zh-CN"));
+      }
+    }
+  } catch (error) {
+    integrationFeedback(provider, error.message + "。本机内容已保留，可以重试。" + (error.message.includes("超时") ? "超时不代表服务器已撤销操作。" : ""), true);
+  } finally {
+    ui.busy = false;
+    if (ownsSync) { syncState.integrationSyncing = false; renderCloudPanel(); }
+    $("#connect" + ui.suffix + "Btn").disabled = $("#sync" + ui.suffix + "Btn").disabled = $("#disconnect" + ui.suffix + "Btn").disabled = false;
+    button.textContent = originalLabel;
+  }
 }
-
-async function syncGoogleNow() {
-  const button = $("#syncGoogleBtn");
-  button.disabled = true;
-  try {
-    if (syncMeta().dirty && !(await syncToCloud())) throw new Error("请先完成方寸云端同步");
-    const result = await apiRequest("/api/integrations/google/sync", { method: "POST", body: "{}" });
-    const remote = await fetchCloudState();
-    if (remote.data) applyCloudData(remote);
-    await loadGoogleStatus();
-    showToast(`Google 同步完成：上传 ${result.stats?.pushed || 0}，拉取 ${result.stats?.pulled || 0}，导入 ${result.stats?.imported || 0}`);
-  } catch (error) { showToast(error.message); await loadGoogleStatus(); }
-  finally { button.disabled = false; }
-}
-
-async function disconnectGoogle() {
-  if (!confirm("断开 Google 日历双向同步吗？Google 中现有的“方寸”日历会保留，不会被删除。")) return;
-  try {
-    await apiRequest("/api/integrations/google", { method: "DELETE" });
-    await loadGoogleStatus();
-    showToast("已断开 Google；远端日历仍保留");
-  } catch (error) { showToast(error.message); }
-}
+async function connectOutlook() { return runIntegrationAction("outlook", "connect"); }
+async function syncOutlookNow() { return runIntegrationAction("outlook", "sync"); }
+async function disconnectOutlook() { return runIntegrationAction("outlook", "disconnect"); }
+async function connectGoogle() { return runIntegrationAction("google", "connect"); }
+async function syncGoogleNow() { return runIntegrationAction("google", "sync"); }
+async function disconnectGoogle() { return runIntegrationAction("google", "disconnect"); }
+window.FangcunExternalOpened = (error) => {
+  if (externalProvider) integrationFeedback(externalProvider, error || "已打开浏览器，请完成授权后返回方寸。", Boolean(error));
+};
 
 async function handleCalendarReturn() {
   if (typeof URLSearchParams === "undefined" || typeof history === "undefined") return;
@@ -3174,11 +3360,34 @@ function reconcileNativeCalendar(result) {
   return changed;
 }
 
-function runNativeCalendarSync() {
+const nativeCalendarRequests = new Map();
+window.FangcunCalendarResult = (id, result) => {
+  const request = nativeCalendarRequests.get(id);
+  if (!request) return;
+  nativeCalendarRequests.delete(id);
+  clearTimeout(request.timer);
+  try { request.resolve(JSON.parse(result)); } catch { request.reject(new Error("系统日历返回了无效数据")); }
+};
+function requestNativeCalendar(operation, payload) {
+  if (typeof window.FangcunNative.calendarRequest !== "function") {
+    return Promise.resolve(JSON.parse(operation === "read" ? window.FangcunNative.readSystemCalendar(payload) : window.FangcunNative.syncSystemCalendar(payload)));
+  }
+  return new Promise((resolve, reject) => {
+    const id = uid();
+    const timer = setTimeout(() => { nativeCalendarRequests.delete(id); reject(new Error("系统日历响应超时，请稍后重试")); }, 30000);
+    nativeCalendarRequests.set(id, { resolve, reject, timer });
+    window.FangcunNative.calendarRequest(id, operation, payload);
+  });
+}
+
+async function runNativeCalendarSync() {
   if (!supportsNativeCalendar() || !data.settings.systemCalendarEnabled || nativeCalendarSyncing) return;
   nativeCalendarSyncing = true;
   try {
-    const readResult = JSON.parse(window.FangcunNative.readSystemCalendar(nativeCalendarAccount()) || "{}");
+    const account = nativeCalendarAccount();
+    const readResult = await requestNativeCalendar("read", account);
+    if (account !== nativeCalendarAccount()) return false;
+    if (readResult.error || !readResult.permission) throw new Error(readResult.error || "请先允许日历读写权限");
     const changed = reconcileNativeCalendar(readResult);
     if (changed) {
       localStorage.setItem(accountKey(STORAGE_KEY), JSON.stringify(data));
@@ -3187,7 +3396,9 @@ function runNativeCalendarSync() {
       renderAll();
     }
     const payload = { account: nativeCalendarAccount(), displayName: currentUser?.displayName || currentUser?.username || "本机", events: nativeCalendarItems() };
-    const syncResult = JSON.parse(window.FangcunNative.syncSystemCalendar(JSON.stringify(payload)) || "{}");
+    const syncResult = await requestNativeCalendar("sync", JSON.stringify(payload));
+    if (account !== nativeCalendarAccount()) return false;
+    if (syncResult.error || !syncResult.permission) throw new Error(syncResult.error || "请先允许日历读写权限");
     if (syncResult.permission && Array.isArray(syncResult.events)) {
       const mapping = androidCalendarMap();
       mapping.knownKeys = syncResult.events.filter((event) => event.key).map((event) => event.key);
@@ -3195,9 +3406,11 @@ function runNativeCalendarSync() {
       saveAndroidCalendarMap(mapping);
     }
     updateSystemCalendarStatus(syncResult);
+    return true;
   } catch (error) {
     console.warn("无法同步安卓系统日历", error);
     updateSystemCalendarStatus({ error: error.message });
+    return false;
   } finally { nativeCalendarSyncing = false; }
 }
 
@@ -3343,42 +3556,33 @@ function checkReminders() {
 }
 
 function exportData() {
-  const blob = new Blob([JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `方寸备份-${localISO()}.json`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-  showToast("备份已导出");
+  closeSidebar();
+  downloadFile(JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2), `方寸备份-${localISO()}.json`, "application/json");
 }
 
-function importData(event) {
+async function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const imported = JSON.parse(reader.result);
-      if (!Array.isArray(imported.tasks) || !Array.isArray(imported.projects)) throw new Error("格式错误");
-      data = {
-        tasks: imported.tasks.map((task) => ({ courseId: "", projectId: "", type: "task", repeat: "none", dueTime: "", startDate: "", startTime: "", endDate: "", endTime: "", reminderMinutes: -1, ...task })),
-        projects: imported.projects.map((project) => ({ nextActionTaskId: "", startDate: project.startDate || localISO(new Date(project.createdAt || Date.now())), milestones: Array.isArray(project.milestones) ? project.milestones : [], ...project })),
-        semester: imported.semester || defaultSemester(),
-        timeSlots: imported.timeSlots?.length ? imported.timeSlots : defaultTimeSlots(),
-        courses: (imported.courses || []).map((course) => ({ code: "", campus: "", ...course })),
-        courseExceptions: imported.courseExceptions || [],
-        calendarRules: imported.calendarRules || [],
-        settings: imported.settings || { notificationsEnabled: false },
-      };
-      saveData();
-      showToast("备份已导入");
-    } catch (error) {
-      showToast("无法导入：文件格式不正确");
-    }
-    event.target.value = "";
-  };
-  reader.readAsText(file);
+  try {
+    if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) throw new Error("正在同步，请完成后再恢复备份");
+    if (file.size > 4 * 1024 * 1024) throw new Error("备份文件超过 4 MB，请确认选择的是方寸 JSON 备份");
+    const imported = JSON.parse(await file.text());
+    if (!Array.isArray(imported.tasks) || !Array.isArray(imported.projects)) throw new Error("请选择方寸导出的 JSON 备份");
+    const restored = normalizeData(imported);
+    if (!restored) throw new Error("备份数据结构不正确");
+    if (syncState.syncing || syncState.reconciling || syncState.pulling || syncState.integrationSyncing) throw new Error("正在同步，请完成后再恢复备份");
+    if (!confirm(`恢复备份中的 ${restored.tasks.length} 个事项、${restored.courses.length} 门课程？当前本机内容会保留恢复副本，云端不会自动被覆盖。`)) return;
+    localStorage.setItem(accountKey(PRE_CLOUD_BACKUP_KEY), JSON.stringify({ data, savedAt: new Date().toISOString() }));
+    clearTimeout(syncTimer);
+    syncState.conflict = Boolean(syncState.authenticated);
+    updateSyncMeta({ needsChoice: true });
+    data = restored;
+    saveData();
+    closeSidebar();
+    showToast("备份已恢复；登录状态下请在同步页确认保留版本");
+  } catch (error) {
+    showToast(`无法导入：${error.message}`);
+  } finally { event.target.value = ""; }
 }
 
 function initStaticEvents() {
@@ -3460,15 +3664,8 @@ function initStaticEvents() {
     semesterDraftSlots.splice(Number(button.dataset.removeSlot), 1);
     renderTimeSlotEditor();
   });
-  $("#scheduleImportBtn").addEventListener("click", () => {
-    updateNotificationStatus();
-    loadCalendarSubscription();
-    loadOutlookStatus();
-    loadGoogleStatus();
-    updateSystemCalendarStatus();
-    $("#undoScheduleImportBtn").classList.toggle("hidden", !data.settings.lastScheduleImportUndo);
-    $("#scheduleImportModal").showModal();
-  });
+  $("#scheduleImportBtn").addEventListener("click", () => openDataHub("calendar"));
+  $$("[data-sync-tab]").forEach((button) => button.addEventListener("click", () => selectDataHubTab(button.dataset.syncTab)));
   $("#shiguangImportInput").addEventListener("change", importShiguang);
   $("#icsImportInput").addEventListener("change", importIcs);
   $("#wordScheduleInput").addEventListener("change", importWordSchedule);
@@ -3487,7 +3684,14 @@ function initStaticEvents() {
   $("#syncGoogleBtn").addEventListener("click", syncGoogleNow);
   $("#disconnectGoogleBtn").addEventListener("click", disconnectGoogle);
   $("#enableSystemCalendarBtn").addEventListener("click", enableSystemCalendar);
-  $("#syncSystemCalendarBtn").addEventListener("click", async () => { await runNativeCalendarSync(); showToast("系统日历同步完成"); });
+  $("#syncSystemCalendarBtn").addEventListener("click", async () => {
+    const button = $("#syncSystemCalendarBtn");
+    if (nativeCalendarSyncing) return showToast("系统日历正在同步，请稍候");
+    button.disabled = true;
+    button.textContent = "正在同步…";
+    try { showToast(await runNativeCalendarSync() ? "系统日历同步完成" : "未完成同步，请查看权限或错误提示"); }
+    finally { button.disabled = false; button.textContent = "立即同步系统日历"; }
+  });
   $("#openSystemCalendarBtn").addEventListener("click", () => window.FangcunNative?.openSystemCalendar?.());
   $("#dismissUpdateBtn").addEventListener("click", () => $("#updateBanner").classList.add("hidden"));
   $("#applyUpdateBtn").addEventListener("click", () => {
@@ -3510,6 +3714,12 @@ function initStaticEvents() {
   $("#quickAddForm").addEventListener("submit", submitQuickTask);
   $("#smartCaptureForm").addEventListener("submit", confirmSmartCapture);
   $("#smartCapturePreview").addEventListener("change", updateSmartDraftField);
+  $("#smartCapturePreview").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-smart-original]");
+    if (!button) return;
+    const draft = smartDrafts[Number(button.dataset.smartOriginal)];
+    if (draft?.originalText) { draft.title = draft.originalText; renderSmartCapturePreview(); }
+  });
   $("#editSmartCaptureBtn").addEventListener("click", editSmartCapture);
   $("#quickImportant").addEventListener("click", () => { quickDecision.important = !quickDecision.important; quickDecision.touched = true; updateQuickButtons(); });
   $("#quickUrgent").addEventListener("click", () => { quickDecision.urgent = !quickDecision.urgent; quickDecision.touched = true; updateQuickButtons(); });
@@ -3539,7 +3749,11 @@ function initStaticEvents() {
   $("#reminderSettingsBtn").addEventListener("click", openReminderSettings);
   $("#testNotificationBtn").addEventListener("click", scheduleTestNotification);
   $("#testSystemAlarmBtn").addEventListener("click", openTestSystemAlarm);
-  $("#cloudBtn").addEventListener("click", () => { renderCloudPanel(); $("#cloudModal").showModal(); loadAdminPanel(); });
+  $("#cloudBtn").addEventListener("click", () => openDataHub("account"));
+  $("#cloudBtn").addEventListener("click", closeSidebar);
+  $("#sidebarCloseBtn").addEventListener("click", closeSidebar);
+  $("#syncNowBtn").addEventListener("click", syncNow);
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeSidebar(); });
   $("#cloudAuthForm").addEventListener("submit", submitCloudAuth);
   $("#cloudRegisterBtn").addEventListener("click", () => { $("#cloudModal").close(); showAuthGate(); setAuthMode("register"); });
   $("#pullCloudBtn").addEventListener("click", pullCloudData);
@@ -3591,6 +3805,7 @@ function init() {
   if (!["year", "month", "week", "day", "timetable"].includes(scheduleMode)) scheduleMode = "month";
   displayedWeek = currentSemesterWeek();
   initStaticEvents();
+  initCalendarZoom();
   renderAll();
   selectMobileQuadrant(mobileQuadrant, false);
   syncNativeReminders();
@@ -3619,6 +3834,7 @@ function init() {
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
   setInterval(checkReminders, 60000);
+  setInterval(() => { if (activeView === "schedule") refreshCalendarPast(); }, 60000);
 }
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
