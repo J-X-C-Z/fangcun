@@ -63,7 +63,7 @@ const { chromium } = require(process.env.FANGCUN_PLAYWRIGHT_MODULE || 'playwrigh
         }
       }
       async function checkDynamicFields(selector) {
-        const fields=await page.locator(selector).evaluateAll(elements=>elements.filter(el=>el.getBoundingClientRect().height).map(el=>{
+        const fields=await page.locator(selector).evaluateAll(elements=>elements.map(el=>el.classList.contains('liquid-select-native')?el.nextElementSibling:el).filter(el=>el.getBoundingClientRect().height).map(el=>{
           const style=getComputedStyle(el);return {height:el.getBoundingClientRect().height,radius:style.borderRadius,border:style.borderTopWidth};
         }));
         assert.ok(fields.length,`Missing dynamic fields: ${selector}`);
@@ -102,14 +102,14 @@ const { chromium } = require(process.env.FANGCUN_PLAYWRIGHT_MODULE || 'playwrigh
           await cell.hover();
           await page.waitForTimeout(150);
           assert.equal(await cell.evaluate(el=>getComputedStyle(el).borderRadius),radius);
-          assert.equal(await cell.locator('.liquid-lens').count(),0);
+          assert.equal(await cell.locator('.liquid-lens').count(),skin==='liquid'?1:0);
         }
         await page.locator('.landscape-schedule-menu summary').click();
         await page.locator('[data-landscape-schedule-action=course]').click();
         const metrics=await page.evaluate(() => {
           const form=document.getElementById('courseForm');
           const controls=[...form.querySelectorAll('.field input:not([type=checkbox]):not([type=radio]),.field select')];
-          return controls.filter(el=>el.getBoundingClientRect().height).map(el=>({id:el.id,h:el.getBoundingClientRect().height, labelGap:el.getBoundingClientRect().top-el.closest('.field').getBoundingClientRect().top}));
+          return controls.map(el=>el.classList.contains('liquid-select-native')?el.nextElementSibling:el).filter(el=>el.getBoundingClientRect().height).map(el=>({id:el.id,h:el.getBoundingClientRect().height, labelGap:el.getBoundingClientRect().top-el.closest('.field').getBoundingClientRect().top}));
         });
         assert.ok(metrics.every(m=>m.h>=44 && m.h<=47),JSON.stringify(metrics));
         assert.ok(metrics.every(m=>m.labelGap<40),JSON.stringify(metrics));

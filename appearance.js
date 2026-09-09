@@ -48,7 +48,7 @@
       document.body.classList.toggle("dark", root.dataset.mode === "dark");
       mode.value = root.dataset.mode;
       modal.querySelectorAll('[name="skin"]').forEach(input => { input.checked = input.value === root.dataset.skin; });
-      document.querySelector('meta[name="theme-color"]').content = root.dataset.mode === "dark" ? "#1c242a" : root.dataset.skin === "liquid" ? "#e9ecef" : "#f4f2ed";
+      document.querySelector('meta[name="theme-color"]').content = root.dataset.mode === "dark" ? (root.dataset.skin === "liquid" ? "#202934" : "#1f211f") : root.dataset.skin === "liquid" ? "#e8edf2" : "#f4f2ed";
     };
     document.getElementById("appearanceSettingsBtn").addEventListener("click", () => { sync(); modal.showModal(); });
     modal.addEventListener("change", event => {
@@ -60,7 +60,7 @@
     new MutationObserver(() => {
       root.dataset.mode = document.body.classList.contains("dark") ? "dark" : "light";
       mode.value = root.dataset.mode;
-      document.querySelector('meta[name="theme-color"]').content = root.dataset.mode === "dark" ? "#1c242a" : root.dataset.skin === "liquid" ? "#e9ecef" : "#f4f2ed";
+      document.querySelector('meta[name="theme-color"]').content = root.dataset.mode === "dark" ? (root.dataset.skin === "liquid" ? "#202934" : "#1f211f") : root.dataset.skin === "liquid" ? "#e8edf2" : "#f4f2ed";
     }).observe(document.body, { attributes:true, attributeFilter:["class"] });
     window.addEventListener("storage", event => {
       if (event.key === "fangcun-skin") root.dataset.skin = event.newValue === "liquid" ? "liquid" : "classic";
@@ -80,10 +80,8 @@
     function surface(target) {
       if (root.dataset.skin !== "liquid" || reduced.matches || document.hidden) return null;
       if (!(target instanceof Element)) return null;
-      const control = target.closest('[data-material="glass"], button, summary, .skin-option, .field, .smart-field, .calendar-subscription-url, .time-slot-row, .import-choice label, .import-label');
-      if (!control || control.disabled || control.closest('[inert], [data-material="paper"], [data-material="none"]')) return null;
-      // Grid cells and dense content keep their geometry; they are paper, not lenses.
-      if (control.matches('.calendar-time-cell,.calendar-week-head,.calendar-all-day,.calendar-all-day-item,.calendar-week-event,.course-block,.calendar-entry,.calendar-more,.mini-days button,.complete-btn,.project-action-check,.project-check-row,.project-action-open,.course-linked-task,.sidebar-backdrop')) return null;
+      const control = target.closest('[data-material="glass"], button, input, textarea, select, summary, a[href], [role="button"], [role="tab"], [role="switch"], [role="option"], .skin-option, .switch-label, .import-choice label, .import-label, .task-card, .list-row, .today-class, .today-timeline-row, .today-ddl-row, .day-course-card, .day-task-card, .agenda-course, .overview-course, .month-day, [data-calendar-date]');
+      if (!control || control.disabled || control.matches('[aria-disabled="true"],.liquid-select-native,.sidebar-backdrop') || control.closest('[inert], [data-material="none"]')) return null;
       if (active?.target === control) return active;
       clear();
       const rect = control.getBoundingClientRect();
@@ -93,8 +91,15 @@
       const computed = getComputedStyle(control);
       if (!rect.width || !rect.height) return null;
       active = { target:control, lens, rect, position:control.style.position, radius:control.style.borderRadius, animations:new Set() };
-      if (computed.position === "static") control.style.position = "relative";
-      control.append(lens);
+      if (control.matches('input,textarea,select')) {
+        // Native/replaced controls cannot contain children. A fixed decorative
+        // proxy matches the control itself, never its label or helper text.
+        lens.style.cssText = `position:fixed;inset:auto;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;border-radius:${computed.borderRadius};z-index:250;`;
+        (control.closest('dialog') || document.body).append(lens);
+      } else {
+        if (computed.position === "static") control.style.position = "relative";
+        control.append(lens);
+      }
       ensureRenderer(active);
       return active;
     }

@@ -10,8 +10,10 @@
     <link rel="manifest" href="manifest.webmanifest?v=2.7.0" />
     <link rel="stylesheet" href="styles.css?v=2.7.0" />
     <link rel="stylesheet" href="v22-layout.css?v=2.7.0" />
-    <link rel="stylesheet" href="appearance.css?v=2" />
-    <script src="appearance.js?v=2"></script>
+    <link rel="stylesheet" href="appearance.css?v=3" />
+    <link rel="stylesheet" href="liquid.css?v=3" />
+    <script src="appearance.js?v=3"></script>
+    <script src="liquid-select.js?v=3" defer></script>
   </head>
   <body data-active-view="today">
     <svg class="icon-sprite" aria-hidden="true">
@@ -481,7 +483,7 @@
         <div class="modal-header"><div><span class="eyebrow">外观设置</span><h2 id="appearanceTitle">选择你的方寸</h2></div><button class="close-button" aria-label="关闭外观设置">×</button></div>
         <fieldset class="skin-options"><legend>界面皮肤</legend>
           <label class="skin-option"><input type="radio" name="skin" value="classic" /><span class="skin-preview preview-classic" aria-hidden="true"><i></i><i></i><i></i></span><strong>经典纸感</strong><small>熟悉的暖纸、墨色与绿色</small></label>
-          <label class="skin-option"><input type="radio" name="skin" value="liquid" /><span class="skin-preview preview-liquid" aria-hidden="true"><i></i><i></i><i></i></span><strong>流光玻璃</strong><small>冷雾玻璃、柔和水纹与纸感内容</small></label>
+          <label class="skin-option"><input type="radio" name="skin" value="liquid" /><span class="skin-preview preview-liquid" aria-hidden="true"><i></i><i></i><i></i></span><strong>流光玻璃</strong><small>冷银雾面、通透叠层与柔和水纹</small></label>
         </fieldset>
         <label class="field"><span>显示模式</span><select id="appearanceMode"><option value="light">浅色</option><option value="dark">深色</option></select></label>
         <p class="field-hint" id="appearanceStatus" role="status">选择立即生效，仅保存在当前设备。</p>
