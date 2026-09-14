@@ -95,6 +95,7 @@ let installPrompt = null;
 let waitingServiceWorker = null;
 let focusRotation = 0;
 let pendingScheduleImport = null;
+let currentLinkSnapshot = null;
 
 function accountKey(base) {
   return currentUser?.id ? `${base}:user-${currentUser.id}` : base;
@@ -649,7 +650,7 @@ function closeSidebar() {
 }
 
 function selectDataHubTab(tab) {
-  if (!["account", "calendar", "files", "agent"].includes(tab)) tab = "account";
+  if (!["account", "link", "calendar", "files", "agent"].includes(tab)) tab = "account";
   if (tab !== "agent") clearAgentAccess();
   $$("[data-sync-panel]").forEach((panel) => panel.classList.toggle("hidden", panel.dataset.syncPanel !== tab));
   $$("[data-sync-tab]").forEach((button) => {
@@ -658,11 +659,92 @@ function selectDataHubTab(tab) {
   });
   $("#cloudModal").scrollTop = 0;
   if (tab === "account") renderCloudPanel();
+  if (tab === "link") loadLinkSnapshot();
   if (tab === "calendar") {
     loadCalendarSubscription(); loadOutlookStatus(); loadGoogleStatus(); updateSystemCalendarStatus();
   }
   if (tab === "files") $("#undoScheduleImportBtn").classList.toggle("hidden", !data.settings.lastScheduleImportUndo);
   if (tab === "agent") loadAgentAccess();
+}
+
+function renderLinkSnapshot(snapshot) {
+  const contract = window.FangcunLinkContract;
+  if (!snapshot || !contract) return;
+  currentLinkSnapshot = snapshot;
+  const payload = snapshot.payload || {};
+  const tasks = payload.tasks?.items || [];
+  const schedule = payload.schedule?.items || [];
+  const stateLabels = { mock: "模拟数据", live: "已读取", stale: "数据较旧", empty: "暂无数据" };
+  const state = snapshot.dataState || "empty";
+  const pill = $("#linkStatePill");
+  if (pill) { pill.textContent = stateLabels[state] || state; pill.dataset.state = state; }
+  $("#linkSummaryGrid").innerHTML = `<div class="link-summary-card"><strong>${tasks.length}</strong><span>待完成任务</span></div><div class="link-summary-card"><strong>${schedule.length}</strong><span>今日安排</span></div><div class="link-summary-card"><strong>${snapshot.sync?.revision || 0}</strong><span>数据版本</span></div>`;
+  $("#linkDeviceCard").innerHTML = `<div><span class="eyebrow">设备状态</span><strong>${escapeHTML(snapshot.device?.name || "方寸手机端")}</strong></div><span class="link-muted">${state === "mock" ? "本地模拟 · 未连接设备" : `只读快照 · ${snapshot.sync?.mode || "pull-only"}`}</span>`;
+  $("#linkScheduleDate").textContent = payload.schedule?.date || "—";
+  $("#linkTaskDate").textContent = payload.tasks?.date || "—";
+  $("#linkScheduleList").innerHTML = schedule.length ? schedule.slice(0, 8).map((item) => `<div class="link-list-row"><strong>${escapeHTML(item.title)}</strong><span>${item.location ? escapeHTML(item.location) : "未设置地点"}</span></div>`).join("") : '<span class="link-muted">今天没有标准化安排</span>';
+  $("#linkTaskList").innerHTML = tasks.length ? tasks.slice(0, 8).map((item) => `<div class="link-list-row"><strong>${escapeHTML(item.title)}</strong><span>${item.due ? `${escapeHTML(item.due)}${item.dueTime ? ` ${escapeHTML(item.dueTime)}` : ""}` : "未排期"}</span></div>`).join("") : '<span class="link-muted">没有待完成事项</span>';
+  $("#linkSnapshotMeta").textContent = state === "mock" ? "使用本地模拟数据 · 具体连接尚未启用" : `${snapshot.sync?.updatedAt ? formatSyncTime(snapshot.sync.updatedAt) : "尚未同步"} · 只读预览`;
+}
+
+function parseNativeResult(value) {
+  if (!value) return null;
+  try { return typeof value === "string" ? JSON.parse(value) : value; } catch { return null; }
+}
+
+async function syncLinkToWristband() {
+  const button = $("#syncLinkWristbandBtn");
+  if (!isNativeAndroid() || typeof window.FangcunNative?.syncWristband !== "function") {
+    return showToast("请在方寸 Android App 中使用手环同步");
+  }
+  if (!currentLinkSnapshot) await loadLinkSnapshot();
+  if (!currentLinkSnapshot) return showToast("没有可同步的数据");
+  if (button) { button.disabled = true; button.textContent = "连接中…"; }
+  try {
+    const connected = parseNativeResult(window.FangcunNative.connectWristband(JSON.stringify({}))) || {};
+    if (!connected.ok && connected.state !== "connected") throw new Error(connected.error || "手环未连接");
+    if (button) button.textContent = "传输中…";
+    const result = parseNativeResult(window.FangcunNative.syncWristband(JSON.stringify(currentLinkSnapshot))) || {};
+    if (!result.ok) throw new Error(result.error || "传输失败");
+    $("#linkSnapshotMeta").textContent = `已发送到手环 · 版本 ${currentLinkSnapshot.sync?.revision || 0}`;
+    showToast("已同步到手环");
+  } catch (error) {
+    $("#linkSnapshotMeta").textContent = `手环同步失败 · ${error.message || "请检查连接"}`;
+    showToast(error.message || "手环同步失败");
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "同步到手环"; }
+  }
+}
+
+async function loadLinkSnapshot() {
+  if (!$("#linkStatePill")) return;
+  const button = $("#refreshLinkSnapshotBtn");
+  if (button) { button.disabled = true; button.textContent = "读取中…"; }
+  try {
+    let snapshot;
+    if (syncState.authenticated) snapshot = await apiRequest("/api/v1/link/snapshot");
+    else snapshot = window.FangcunLinkContract?.buildMockSnapshot();
+    renderLinkSnapshot(snapshot);
+  } catch (error) {
+    renderLinkSnapshot(window.FangcunLinkContract?.buildMockSnapshot());
+    $("#linkSnapshotMeta").textContent = `暂时无法读取服务端，已切换模拟数据 · ${error.message || "稍后重试"}`;
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "读取数据预览"; }
+  }
+}
+
+function sendLinkTestNotification() {
+  if (!isNativeAndroid() || typeof window.FangcunNative?.sendLinkTestNotification !== "function") {
+    return showToast("请在方寸 Android App 中发送测试通知");
+  }
+  try {
+    const result = JSON.parse(window.FangcunNative.sendLinkTestNotification());
+    if (result.ok) showToast("测试通知已发出；请确认 Mi Fitness 已开启方寸通知");
+    else if (result.error === "notification_permission_required") {
+      showToast("请先开启方寸通知权限");
+      window.FangcunNative.requestReminderPermissions?.();
+    } else showToast("测试通知未发出，请检查通知设置");
+  } catch { showToast("测试通知未发出，请检查通知设置"); }
 }
 
 function openDataHub(tab = "account") {
@@ -2154,6 +2236,7 @@ function renderAll() {
   renderDailyTip();
   renderProjectOptions();
   bindDynamicEvents();
+  syncNativeSnapshot();
 }
 
 function showToast(message) {
@@ -3083,6 +3166,72 @@ function downloadFile(content, filename, type) {
 }
 
 window.FangcunDocumentSaved = (error) => showToast(error || "文件已保存到所选位置");
+
+let lastNativeDeepLink = "";
+let lastNativeDeepLinkAt = 0;
+window.FangcunNativeDeepLink = (payload) => {
+  if (!payload?.matched) return;
+  const signature = `${payload.deepLink || ""}|${payload.type || ""}|${payload.id || payload.date || ""}`;
+  const now = Date.now();
+  if (signature === lastNativeDeepLink && now - lastNativeDeepLinkAt < 1000) return;
+  lastNativeDeepLink = signature;
+  lastNativeDeepLinkAt = now;
+
+  const type = payload.type;
+  if (type === "today") switchView("today");
+  else if (type === "calendar" && /^\d{4}-\d{2}-\d{2}$/.test(payload.date || "")) {
+    const date = dateFromISO(payload.date);
+    displayedDay = payload.date;
+    displayedYear = date.getFullYear();
+    displayedMonth = date.getMonth();
+    displayedWeek = currentSemesterWeek(date);
+    scheduleMode = "day";
+    localStorage.setItem("fangcun-schedule-mode", scheduleMode);
+    switchView("schedule");
+  } else if (type === "create") openPrimaryCreate();
+  else if (type === "project") {
+    switchView("projects");
+    if (payload.id && data.projects.some((project) => project.id === payload.id)) openProjectModal(payload.id);
+    else if (payload.id) showToast("没有找到这个项目，已打开项目列表");
+  } else if (type === "course") {
+    switchView("schedule");
+    if (payload.id && data.courses.some((course) => course.id === payload.id)) openCourseModal(payload.id);
+    else if (payload.id) showToast("没有找到这门课程，已打开日历");
+  } else if (["task", "event", "focus"].includes(type)) {
+    switchView("today");
+    if (payload.id && data.tasks.some((task) => task.id === payload.id)) openTaskModal(payload.id);
+    else if (payload.id) showToast("没有找到这个事项，已打开今天");
+  }
+  window.dispatchEvent(new CustomEvent("fangcun:deeplink", { detail: payload }));
+};
+
+function nativeTodaySnapshot() {
+  const today = localISO();
+  const summary = (task) => ({
+    id: task.id,
+    title: task.title,
+    dueAt: task.due ? `${task.due}${task.dueTime ? `T${task.dueTime}` : ""}` : "",
+    completed: Boolean(task.completed),
+    deepLink: `fangcun://${task.type === "event" ? "event" : "task"}/${encodeURIComponent(task.id)}`,
+  });
+  const focus = data.tasks.filter((task) => !task.completed && (task.focusPinned || task.today)).slice(0, 3).map(summary);
+  const deadlines = data.tasks.filter((task) => !task.completed && task.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 5).map(summary);
+  const next = data.tasks.filter((task) => !task.completed && task.startDate === today && task.startTime).sort((a, b) => a.startTime.localeCompare(b.startTime))[0];
+  const todayTasks = data.tasks.filter((task) => task.today || task.due === today);
+  const completed = todayTasks.filter((task) => task.completed).length;
+  return {
+    focus,
+    nextEvent: next ? summary(next) : {},
+    deadlines,
+    progress: todayTasks.length ? completed / todayTasks.length : 0,
+  };
+}
+
+function syncNativeSnapshot() {
+  if (!isNativeAndroid() || typeof window.FangcunNative.saveTodaySnapshot !== "function") return;
+  try { window.FangcunNative.saveTodaySnapshot(JSON.stringify(nativeTodaySnapshot())); }
+  catch (error) { console.warn("无法同步安卓 Today 快照", error); }
+}
 
 function exportScheduleJson() {
   const payload = { courses: data.courses.map((course) => ({ id: course.id, name: course.name, code: course.code, campus: course.campus, teacher: course.teacher, position: course.location, day: course.day, startSection: course.startSection, endSection: course.endSection, color: course.color, weeks: course.weeks, reminderMinutes: course.reminderMinutes, notes: course.notes })), timeSlots: data.timeSlots, config: { semesterStartDate: data.semester.startDate, semesterTotalWeeks: data.semester.totalWeeks } };
@@ -4085,6 +4234,9 @@ function initStaticEvents() {
     renderTimeSlotEditor();
   });
   $("#scheduleImportBtn").addEventListener("click", () => openDataHub("calendar"));
+  $("#refreshLinkSnapshotBtn").addEventListener("click", loadLinkSnapshot);
+  $("#syncLinkWristbandBtn").addEventListener("click", syncLinkToWristband);
+  $("#sendLinkTestNotificationBtn").addEventListener("click", sendLinkTestNotification);
   $$("[data-sync-tab]").forEach((button) => button.addEventListener("click", () => selectDataHubTab(button.dataset.syncTab)));
   $("#shiguangImportInput").addEventListener("change", importShiguang);
   $("#icsImportInput").addEventListener("change", importIcs);

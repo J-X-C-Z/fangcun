@@ -10,6 +10,14 @@ data/
 
 # Android 构建产物与签名（构建产物体积大且含本地路径）
 .tooling/
+flutter_devtools/.dart_tool/
+flutter_devtools/build/
+flutter_devtools/.flutter-plugins
+flutter_devtools/.flutter-plugins-dependencies
+flutter_devtools/android/.gradle/
+flutter_devtools/android/.idea/
+flutter_devtools/android/local.properties
+flutter_devtools/ios/Flutter/
 android/.gradle/
 android/build/
 android/app/build/

@@ -1,0 +1,96 @@
+import 'package:flutter/services.dart';
+
+/// Stable, vendor-neutral contract for a future wristband provider.
+enum WristbandState { disconnected, connecting, connected, unsupported, error }
+
+WristbandState wristbandStateFromJson(Object? value) {
+  switch (value) {
+    case 'disconnected':
+      return WristbandState.disconnected;
+    case 'connecting':
+      return WristbandState.connecting;
+    case 'connected':
+      return WristbandState.connected;
+    case 'error':
+      return WristbandState.error;
+    default:
+      return WristbandState.unsupported;
+  }
+}
+
+class WristbandCapabilities {
+  const WristbandCapabilities({
+    required this.available,
+    required this.state,
+    required this.adapter,
+    required this.transport,
+    this.note,
+    this.features = const <String, bool>{},
+    this.requiresPermissions = const <String>[],
+  });
+
+  factory WristbandCapabilities.fromJson(Map<String, dynamic> json) {
+    final rawFeatures = json['features'];
+    return WristbandCapabilities(
+      available: json['available'] == true,
+      state: wristbandStateFromJson(json['state']),
+      adapter: json['adapter'] as String? ?? 'none',
+      transport: json['transport'] as String? ?? 'none',
+      note: json['note'] as String?,
+      features: rawFeatures is Map
+          ? rawFeatures.map((key, value) => MapEntry(key.toString(), value == true))
+          : const <String, bool>{},
+      requiresPermissions: (json['requiresPermissions'] as List? ?? const <Object>[])
+          .whereType<String>()
+          .toList(growable: false),
+    );
+  }
+
+  final bool available;
+  final WristbandState state;
+  final String adapter;
+  final String transport;
+  final String? note;
+  final Map<String, bool> features;
+  final List<String> requiresPermissions;
+
+  bool supports(String feature) => features[feature] == true;
+}
+
+class WristbandResult {
+  const WristbandResult({required this.ok, required this.state, this.error, this.raw = const {}});
+
+  factory WristbandResult.fromJson(Map<String, dynamic> json) => WristbandResult(
+        ok: json['ok'] == true,
+        state: wristbandStateFromJson(json['state']),
+        error: json['error'] as String?,
+        raw: json,
+      );
+
+  final bool ok;
+  final WristbandState state;
+  final String? error;
+  final Map<String, dynamic> raw;
+}
+
+class WristbandClient {
+  WristbandClient({MethodChannel? channel}) : _channel = channel ?? const MethodChannel('app.fangcun/hyperos');
+
+  final MethodChannel _channel;
+
+  Future<WristbandCapabilities> capabilities() async => WristbandCapabilities.fromJson(await _call('getWristbandCapabilities'));
+  Future<WristbandCapabilities> status() async => WristbandCapabilities.fromJson(await _call('getWristbandStatus'));
+  Future<WristbandResult> connect([Map<String, dynamic> options = const {}]) async => WristbandResult.fromJson(await _call('connectWristband', options));
+  Future<WristbandResult> disconnect() async => WristbandResult.fromJson(await _call('disconnectWristband'));
+  Future<WristbandResult> sync(Map<String, dynamic> payload) async => WristbandResult.fromJson(await _call('syncWristband', payload));
+
+  Future<Map<String, dynamic>> _call(String method, [Object? arguments]) async {
+    try {
+      final result = await _channel.invokeMethod<dynamic>(method, arguments);
+      if (result is Map) return Map<String, dynamic>.from(result.map((key, value) => MapEntry(key.toString(), value)));
+      return <String, dynamic>{'ok': false, 'state': 'unsupported', 'error': 'missing_native_module'};
+    } on MissingPluginException {
+      return <String, dynamic>{'ok': false, 'state': 'unsupported', 'error': 'missing_native_module'};
+    }
+  }
+}

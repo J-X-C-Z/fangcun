@@ -1,0 +1,1 @@
+/Users/jxcz/Documents/GitHub/fangcun/target/debug/fangcun-server: /Users/jxcz/Documents/GitHub/fangcun/rust-core/src/lib.rs /Users/jxcz/Documents/GitHub/fangcun/rust-server/src/main.rs /Users/jxcz/Documents/GitHub/fangcun/rust-server/src/sync.rs

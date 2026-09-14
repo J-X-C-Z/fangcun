@@ -16,6 +16,7 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.WindowInsets;
+import android.widget.FrameLayout;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -31,8 +32,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
-    private static final String APP_URL = "https://fangcun.example.org/";
-    private static final String APP_HOST = "fangcun.example.org";
+    private static final String APP_URL = "https://schedule.woxingsf.top/";
+    private static final String APP_HOST = "schedule.woxingsf.top";
     private static final String PRIVACY_CONSENT_KEY = "privacy-consent-2026-09-03";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1201;
     private static final int CALENDAR_PERMISSION_REQUEST = 1202;
@@ -45,12 +46,20 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileChooserCallback;
     private byte[] pendingExport;
     private final ExecutorService fileWorker = Executors.newSingleThreadExecutor();
+    private HyperOSNativeModule hyperOS;
+    private DeepLinkRouter deepLinks;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         configureEdgeToEdgeWindow();
         setContentView(R.layout.activity_main);
+        hyperOS = new HyperOSNativeModule(this);
+        deepLinks = new DeepLinkRouter(APP_HOST);
+        if (BuildConfig.DEVELOPER_MODE) {
+            FrameLayout root = findViewById(R.id.rootContainer);
+            root.addView(new DeveloperOverlayView(this, hyperOS), new FrameLayout.LayoutParams(-1, -1));
+        }
         ReminderReceiver.ensureChannel(this);
         systemCalendar = new SystemCalendarBridge(this);
         webView = findViewById(R.id.webview);
@@ -182,6 +191,7 @@ public class MainActivity extends Activity {
                 if (!safeInsetsScript.isEmpty()) view.evaluateJavascript(safeInsetsScript, null);
                 view.setVisibility(View.VISIBLE);
                 loadingView.setVisibility(View.GONE);
+                dispatchDeepLink(getIntent());
             }
 
             @Override
@@ -233,6 +243,59 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String sendLinkTestNotification() {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                return "{\"ok\":false,\"error\":\"notification_permission_required\"}";
+            }
+            ReminderReceiver.postNotification(getApplicationContext(), "fangcun-link-test", "方寸 · 手机互联测试", "如果你在 Mi Fitness 中开启了方寸的 App 通知，这条消息会转发到小米手环。");
+            return "{\"ok\":true,\"transport\":\"system-notification\"}";
+        }
+
+        @JavascriptInterface
+        public void saveTodaySnapshot(String payload) {
+            if (payload == null || payload.length() > 262144 || hyperOS == null) return;
+            hyperOS.saveTodaySnapshot(payload);
+        }
+
+        @JavascriptInterface
+        public void refreshWidget() {
+            if (hyperOS != null) hyperOS.refreshWidget();
+        }
+
+        @JavascriptInterface
+        public String getWristbandCapabilities() {
+            return hyperOS == null ? "{\"api\":\"fangcun.wristband.v1\",\"state\":\"unsupported\"}" : hyperOS.wristbandCapabilities().toString();
+        }
+
+        @JavascriptInterface
+        public String getWristbandStatus() {
+            return hyperOS == null ? "{\"api\":\"fangcun.wristband.v1\",\"state\":\"unsupported\"}" : hyperOS.wristbandStatus().toString();
+        }
+
+        @JavascriptInterface
+        public String connectWristband(String options) {
+            try { return hyperOS == null ? "{\"ok\":false,\"state\":\"unsupported\"}" : hyperOS.connectWristband(options == null ? new JSONObject() : new JSONObject(options)).toString(); }
+            catch (Exception ignored) { return "{\"ok\":false,\"state\":\"error\",\"error\":\"invalid_options\"}"; }
+        }
+
+        @JavascriptInterface
+        public String disconnectWristband() {
+            return hyperOS == null ? "{\"ok\":false,\"state\":\"unsupported\"}" : hyperOS.disconnectWristband().toString();
+        }
+
+        @JavascriptInterface
+        public String syncWristband(String payload) {
+            try { return hyperOS == null ? "{\"ok\":false,\"state\":\"unsupported\"}" : hyperOS.syncWristband(payload == null ? new JSONObject() : new JSONObject(payload)).toString(); }
+            catch (Exception ignored) { return "{\"ok\":false,\"state\":\"error\",\"error\":\"invalid_payload\"}"; }
+        }
+
+        @JavascriptInterface
+        public String openWristbandApp(String options) {
+            try { return hyperOS == null ? "{\"ok\":false,\"state\":\"unsupported\"}" : hyperOS.openWristbandApp(options == null ? new JSONObject() : new JSONObject(options)).toString(); }
+            catch (Exception ignored) { return "{\"ok\":false,\"state\":\"error\",\"error\":\"invalid_options\"}"; }
+        }
+
+        @JavascriptInterface
         public void requestReminderPermissions() {
             runOnUiThread(() -> {
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -279,6 +342,14 @@ public class MainActivity extends Activity {
                 try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); notifyExternalOpened(""); }
                 catch (Exception error) { notifyExternalOpened("无法打开浏览器，请先安装或启用系统浏览器后重试"); }
             });
+        }
+
+        @JavascriptInterface
+        public String triggerDeveloperEvent(String event, String payload) {
+            if (!BuildConfig.DEVELOPER_MODE || hyperOS == null || !NativeEventContract.isSupported(event)) return "{\"ok\":false,\"error\":\"unsupported_event\"}";
+            try {
+                return hyperOS.triggerEvent(event, payload == null ? new JSONObject() : new JSONObject(payload)).toString();
+            } catch (Exception ignored) { return "{\"ok\":false}"; }
         }
     }
 
@@ -361,6 +432,7 @@ public class MainActivity extends Activity {
         if (!hasPrivacyConsent()) { showPrivacyConsent(); return; }
         String query = integrationReturnQuery(intent);
         if (!query.isEmpty() && webView != null) webView.loadUrl(APP_URL + query);
+        else dispatchDeepLink(intent);
     }
 
     private String integrationReturnQuery(Intent intent) {
@@ -369,6 +441,17 @@ public class MainActivity extends Activity {
         if ("outlook-connected".equalsIgnoreCase(data.getHost())) return "?outlook=connected";
         if ("google-connected".equalsIgnoreCase(data.getHost())) return "?google=connected";
         return "";
+    }
+
+    private void dispatchDeepLink(Intent intent) {
+        if (deepLinks == null || webView == null) return;
+        JSONObject route = deepLinks.parse(intent);
+        if (!route.optBoolean("matched", false)) return;
+        Runnable dispatch = () -> webView.evaluateJavascript(
+            "window.FangcunNativeDeepLink&&window.FangcunNativeDeepLink(" + route.toString() + ")", null);
+        webView.post(dispatch);
+        // onPageCommitVisible can precede the final app.js evaluation on slower devices.
+        webView.postDelayed(dispatch, 350);
     }
 
     @Override

@@ -16,6 +16,10 @@ public class ReminderReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        postNotification(context, intent.getStringExtra("id"), intent.getStringExtra("title"), intent.getStringExtra("body"));
+    }
+
+    static void postNotification(Context context, String id, String title, String body) {
         ensureChannel(context);
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         Intent open = new Intent(context, MainActivity.class).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -23,16 +27,16 @@ public class ReminderReceiver extends BroadcastReceiver {
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(context, CHANNEL_ID) : new Notification.Builder(context);
         Notification notification = builder
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle(intent.getStringExtra("title"))
-            .setContentText(intent.getStringExtra("body"))
-            .setStyle(new Notification.BigTextStyle().bigText(intent.getStringExtra("body")))
+            .setContentTitle(title == null || title.isEmpty() ? "方寸提醒" : title)
+            .setContentText(body == null ? "" : body)
+            .setStyle(new Notification.BigTextStyle().bigText(body == null ? "" : body))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_REMINDER)
             .setPriority(Notification.PRIORITY_HIGH)
             .build();
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.notify((intent.getStringExtra("id") == null ? "fangcun" : intent.getStringExtra("id")).hashCode(), notification);
+        manager.notify((id == null ? "fangcun" : id).hashCode(), notification);
     }
 
     static void ensureChannel(Context context) {
