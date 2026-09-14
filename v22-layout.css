@@ -446,6 +446,24 @@ body .data-hub-modal form { padding:0; margin:0; max-height:none; overflow:visib
 .data-hub-tabs { display:flex; gap:4px; margin:0 0 16px; padding:4px; border:1px solid var(--line); border-radius:99px; background:var(--bg); }
 .data-hub-tabs button { flex:1; min-width:0; min-height:40px; padding:6px 8px; border:0; border-radius:99px; color:var(--muted); background:transparent; font-size:13px; cursor:pointer; }
 .data-hub-tabs button[aria-selected="true"] { color:var(--card); background:var(--accent); }
+.link-panel-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin:4px 0 8px; }
+.link-panel-heading h3 { margin:4px 0 0; }
+.link-state-pill { padding:5px 9px; border:1px solid var(--line); border-radius:99px; color:var(--muted); font-size:12px; white-space:nowrap; }
+.link-state-pill[data-state="live"] { color:#16734a; border-color:#9bd7b8; background:#eefaf3; }
+.link-state-pill[data-state="mock"] { color:#8b6210; border-color:#e8c77a; background:#fff8e6; }
+.link-summary-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:14px 0; }
+.link-summary-card, .link-data-card { padding:14px; border:1px solid var(--line); border-radius:16px; background:color-mix(in srgb,var(--card) 88%,var(--bg)); }
+.link-summary-card strong { display:block; font-size:24px; line-height:1.1; }
+.link-summary-card span, .link-muted, .link-data-card .eyebrow, .link-section-title span:last-child { color:var(--muted); font-size:12px; }
+.link-data-card { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:8px 0; }
+.link-data-card strong { display:block; margin-top:4px; }
+.link-list-card { display:block; }
+.link-section-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.link-list { display:grid; gap:0; }
+.link-list-row { display:flex; justify-content:space-between; gap:16px; padding:9px 0; border-top:1px solid var(--line); }
+.link-list-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.link-list-row span { flex:0 0 auto; color:var(--muted); font-size:12px; }
+@media (max-width:560px) { .data-hub-tabs { overflow:auto; } .data-hub-tabs button { flex:0 0 auto; } .link-summary-card { padding:11px; } .link-list-row { display:block; } .link-list-row span { display:block; margin-top:3px; } }
 body .calendar-integration-setting,body .calendar-subscription-setting { padding:14px; margin:10px 0; border-radius:14px; }
 body .calendar-integration-setting { grid-template-columns:1fr; gap:10px; }
 body .calendar-integration-copy strong { font-size:15px; }

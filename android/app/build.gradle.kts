@@ -17,6 +17,10 @@ android {
     namespace = "app.fangcun"
     compileSdk = 36
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "app.fangcun"
         minSdk = 26
@@ -37,7 +41,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "DEVELOPER_MODE", "true")
+        }
         release {
+            buildConfigField("boolean", "DEVELOPER_MODE", "false")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseSigning) {
@@ -50,4 +58,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation(files("libs/xms-wearable-lib_1.4_release.aar"))
 }
