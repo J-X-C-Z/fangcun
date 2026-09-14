@@ -1,4 +1,4 @@
-const CACHE_NAME = "fangcun-v280-20260913-agent-280";
+const CACHE_NAME = "fangcun-v281-20260915-pr2-link";
 const APP_SHELL = ["./", "./index.html", "./privacy.html", "./styles.css?v=2.8.0", "./v22-layout.css?v=2.8.0", "./smart-parser.js?v=2.8.0", "./docx-schedule-parser.js?v=2.8.0", "./app.js?v=2.8.0", "./manifest.webmanifest?v=2.8.0", "./icon.svg", "./appearance.css?v=6", "./xuan.css?v=3", "./xuan-fibers.svg?v=1", "./xuan-fibers-mobile.png?v=1", "./xuan-sans.woff2?v=2", "./xuan-serif.woff2?v=2", "./material-light.js?v=5", "./touch-material.js?v=2", "./mobile-ui.css?v=2", "./mobile-material.css?v=2", "./mobile-calendar.css?v=1", "./calendar-surface.css?v=1", "./appearance-controls.js?v=1", "./liquid.css?v=5", "./liquid-select.js?v=6", "./appearance.js?v=7", "./liquid-renderer.js"];
 
 self.addEventListener("install", (event) => {

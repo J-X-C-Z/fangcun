@@ -12,7 +12,7 @@ $archive = Join-Path $releaseRoot "fangcun-release-$Version.tar.gz"
 
 $rootFiles = @(
     ".env.example", "APPEARANCE.md", "README.md", "package.json", "index.html", "privacy.html", "styles.css", "v22-layout.css",
-    "smart-parser.js", "docx-schedule-parser.js", "app.js", "manifest.webmanifest", "icon.svg",
+    "smart-parser.js", "docx-schedule-parser.js", "link-contract.js", "link-contract-smoke.js", "app.js", "manifest.webmanifest", "icon.svg",
     "appearance.css", "xuan.css", "xuan-fibers.svg", "xuan-fibers-mobile.png", "xuan-sans.woff2", "xuan-serif.woff2", "FONT-LICENSE.txt", "material-light.js", "touch-material.js", "mobile-ui.css", "mobile-material.css", "mobile-calendar.css", "calendar-surface.css", "appearance-controls.js", "liquid.css", "liquid-select.js", "appearance.js", "appearance-browser-smoke.js", "xuan-browser-smoke.js", "liquid-material-smoke.js", "liquid-select-smoke.js", "liquid-renderer.js", "three.module.min.js", "three.core.min.js", "THREE-LICENSE.txt",
     "service-worker.js", "server.js", "outlook-sync.js", "google-sync.js", "reset-password.js", "smart-parser-smoke.js",
     "docx-schedule-smoke.js", "outlook-sync-smoke.js", "google-sync-smoke.js", "smoke-test.js", "runtime-smoke.js",
@@ -39,7 +39,7 @@ try {
     # Whitelist approach: deploy tar only ships operational docs. Internal docs
     # (NEW-CHAT-PROMPT, PROJECT-HANDOFF-*, internal audits, delivery reports) never ship.
     New-Item -ItemType Directory -Path (Join-Path $stageRoot "docs") | Out-Null
-    foreach ($docName in @("calendar-sync-guide.md", "deployment-guide.md", "workbench-xuan.md", "xuan-material.md", "mobile-repair.md", "touch-material.md", "release-2.7.0.md", "AGENT-API.md")) {
+    foreach ($docName in @("calendar-sync-guide.md", "deployment-guide.md", "API-V1.md", "LINK-DATA-CONTRACT.md", "workbench-xuan.md", "xuan-material.md", "mobile-repair.md", "touch-material.md", "release-2.7.0.md", "AGENT-API.md")) {
         $src = Join-Path $projectRoot "docs\$docName"
         if (Test-Path -LiteralPath $src) {
             Copy-Item -LiteralPath $src -Destination (Join-Path $stageRoot "docs")

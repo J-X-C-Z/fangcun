@@ -1,5 +1,5 @@
 const APP_VERSION = "2.8.0";
-const APP_BUILD = "20260913-agent-280";
+const APP_BUILD = "20260915-pr2-link";
 const STORAGE_KEY = "fangcun-data-v1";
 const THEME_KEY = "fangcun-theme";
 const SYNC_META_KEY = "fangcun-sync-v1";
