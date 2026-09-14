@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { OutlookIntegration } = require("./outlook-sync");
 const { GoogleIntegration } = require("./google-sync");
+const { SCHEMA: LINK_SCHEMA, VERSION: LINK_VERSION, buildSnapshot } = require("./link-contract");
 
 const APP_VERSION = "2.8.0";
 const port = Number(process.env.PORT || 4173);
@@ -18,7 +19,7 @@ const sessionMaxAge = 30 * 24 * 60 * 60;
 const maxBodyBytes = 2 * 1024 * 1024;
 const agentMaxBodyBytes = 64 * 1024;
 const agentRequests = new Map();
-const publicFiles = new Set(["index.html", "privacy.html", "styles.css", "v22-layout.css", "smart-parser.js", "docx-schedule-parser.js", "app.js", "manifest.webmanifest", "icon.svg", "service-worker.js", "appearance.css", "xuan.css", "xuan-fibers.svg", "xuan-fibers-mobile.png", "xuan-sans.woff2", "xuan-serif.woff2", "material-light.js", "touch-material.js", "mobile-ui.css", "mobile-material.css", "mobile-calendar.css", "calendar-surface.css", "appearance-controls.js", "liquid.css", "liquid-select.js", "appearance.js", "liquid-renderer.js", "three.module.min.js", "three.core.min.js"]);
+const publicFiles = new Set(["index.html", "privacy.html", "styles.css", "v22-layout.css", "smart-parser.js", "docx-schedule-parser.js", "link-contract.js", "app.js", "manifest.webmanifest", "icon.svg", "service-worker.js", "appearance.css", "xuan.css", "xuan-fibers.svg", "xuan-fibers-mobile.png", "xuan-sans.woff2", "xuan-serif.woff2", "material-light.js", "touch-material.js", "mobile-ui.css", "mobile-material.css", "mobile-calendar.css", "calendar-surface.css", "appearance-controls.js", "liquid.css", "liquid-select.js", "appearance.js", "liquid-renderer.js", "three.module.min.js", "three.core.min.js"]);
 const types = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".png": "image/png" };
 const attempts = new Map();
 
@@ -226,7 +227,11 @@ function parseCookies(request) {
     return index < 0 ? [part, ""] : [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
   }));
 }
-function sessionToken(request) { return parseCookies(request).fangcun_session || ""; }
+function sessionToken(request) {
+  const cookie = parseCookies(request).fangcun_session || "";
+  const authorization = String(request.headers.authorization || "").match(/^Session ([A-Za-z0-9_-]{43})$/i);
+  return authorization ? authorization[1] : cookie;
+}
 function requestUser(request) {
   const token = sessionToken(request);
   return token ? statements.getSessionUser.get(hashToken(token), Date.now()) || null : null;
@@ -242,6 +247,7 @@ function createSession(userId, request, response) {
   const now = Date.now();
   statements.addSession.run(hashToken(token), userId, now, now + sessionMaxAge * 1000);
   response.setHeader("Set-Cookie", sessionCookie(token, request));
+  return token;
 }
 
 function originAllowed(request) {
@@ -520,7 +526,7 @@ function agentDocument(userId) {
 }
 function validateAgentTask(body, document, existing = null) {
   agentObject(body);
-  const allowed = new Set(["title", "notes", "due", "dueTime", "important", "urgent", "courseId", existing ? "completed" : "quadrant"]);
+  const allowed = new Set(["title", "notes", "due", "dueTime", "important", "urgent", "courseId", "projectId", existing ? "completed" : "quadrant"]);
   if (Object.keys(body).some((key) => !allowed.has(key))) throw agentError(400, "包含不支持的任务字段");
   if (existing && !Object.keys(body).length) throw agentError(400, "请提供至少一个要修改的字段");
   const has = (key) => Object.hasOwn(body, key);
@@ -531,6 +537,7 @@ function validateAgentTask(body, document, existing = null) {
   for (const key of ["important", "urgent", "completed"]) if (has(key) && typeof body[key] !== "boolean") throw agentError(400, `${key} 必须为布尔值`);
   if (has("quadrant") && !["q1", "q2", "q3", "q4"].includes(body.quadrant)) throw agentError(400, "quadrant 只能为 q1 到 q4，实际分类由 important/urgent 推导");
   if (has("courseId") && (typeof body.courseId !== "string" || body.courseId.length > 120 || (body.courseId !== "" && !document.courses.some((course) => course.id === body.courseId)))) throw agentError(400, "courseId 必须是当前用户已有的课程，或空字符串");
+  if (has("projectId") && (typeof body.projectId !== "string" || body.projectId.length > 120 || (body.projectId !== "" && !document.projects.some((project) => project.id === body.projectId)))) throw agentError(400, "projectId 必须是当前用户已有的项目，或空字符串");
   const now = Date.now();
   const task = existing ? { ...existing } : {
     id: crypto.randomUUID(), title: "", notes: "", due: "", dueTime: "", courseId: "", projectId: "",
@@ -546,6 +553,35 @@ function validateAgentTask(body, document, existing = null) {
   if (has("completed")) task.completedAt = task.completed ? (existing?.completedAt || now) : null;
   task.updatedAt = now;
   return task;
+}
+function validateAgentMilestones(value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 100) throw agentError(400, "milestones 必须是不超过 100 项的数组");
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw agentError(400, "里程碑格式不正确");
+    const allowed = new Set(["id", "title", "due", "completed"]);
+    if (Object.keys(item).some((key) => !allowed.has(key))) throw agentError(400, "里程碑包含不支持的字段");
+    if (typeof item.title !== "string" || !item.title.trim() || [...item.title.trim()].length > 200) throw agentError(400, "里程碑 title 需要为 1 到 200 个字");
+    if (item.due !== undefined && item.due !== "" && !validAgentDate(item.due)) throw agentError(400, "里程碑 due 需要为有效日期或空字符串");
+    if (item.completed !== undefined && typeof item.completed !== "boolean") throw agentError(400, "里程碑 completed 必须为布尔值");
+    return { id: typeof item.id === "string" && item.id ? item.id : crypto.randomUUID(), title: item.title.trim(), due: item.due || "", completed: Boolean(item.completed), completedAt: item.completed ? (item.completedAt || Date.now()) : null };
+  });
+}
+function validateAgentProject(body, existing = null) {
+  agentObject(body);
+  const allowed = new Set(["name", "goal", "startDate", "due", "color", "status", "milestones"]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) throw agentError(400, "包含不支持的项目字段");
+  if (existing && !Object.keys(body).length) throw agentError(400, "请提供至少一个要修改的字段");
+  const has = (key) => Object.hasOwn(body, key);
+  if ((!existing || has("name")) && (typeof body.name !== "string" || !body.name.trim() || [...body.name.trim()].length > 120)) throw agentError(400, "name 需要为 1 到 120 个字");
+  for (const key of ["goal", "color", "status"]) if (has(key) && (typeof body[key] !== "string" || [...body[key]].length > 2000)) throw agentError(400, `${key} 必须为不超过 2000 个字的字符串`);
+  for (const key of ["startDate", "due"]) if (has(key) && body[key] !== "" && !validAgentDate(body[key])) throw agentError(400, `${key} 需要为有效的 YYYY-MM-DD 日期，或空字符串`);
+  const milestones = validateAgentMilestones(body.milestones);
+  const project = existing ? { ...existing } : { id: crypto.randomUUID(), name: "", goal: "", startDate: "", due: "", color: "sage", status: "active", milestones: [], nextActionTaskId: "", createdAt: Date.now() };
+  for (const key of ["name", "goal", "startDate", "due", "color", "status"]) if (has(key)) project[key] = key === "name" ? body[key].trim() : body[key];
+  if (milestones !== undefined) project.milestones = milestones;
+  project.updatedAt = Date.now();
+  return project;
 }
 function nextAgentOccurrence(task) {
   if (!["daily", "weekly", "weekdays", "monthly"].includes(task.repeat) || task.nextOccurrenceId) return null;
@@ -608,9 +644,16 @@ async function handleAgentManagement(request, response, url, user) {
 async function handleAgentBusiness(request, response, url) {
   let owner = agentOwner(request);
   const taskMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)$/);
-  const action = request.method === "GET" && url.pathname === "/api/agent/schedule" ? "schedule.read"
+  const projectMatch = url.pathname.match(/^\/api\/agent\/projects\/([^/]+)$/);
+  const projectRoute = url.pathname === "/api/agent/projects" || Boolean(projectMatch);
+  const action = request.method === "GET" && url.pathname === "/api/agent/capabilities" ? "capabilities.read"
+    : request.method === "GET" && url.pathname === "/api/agent/data" ? "data.read"
+      : request.method === "PUT" && url.pathname === "/api/agent/data" ? "data.update"
+        : request.method === "GET" && url.pathname === "/api/agent/schedule" ? "schedule.read"
     : request.method === "POST" && url.pathname === "/api/agent/tasks" ? "tasks.create"
-      : request.method === "PATCH" && taskMatch ? "tasks.update" : "request.unsupported";
+      : request.method === "PATCH" && taskMatch ? "tasks.update"
+        : request.method === "POST" && url.pathname === "/api/agent/projects" ? "projects.create"
+          : request.method === "PATCH" && projectMatch ? "projects.update" : "request.unsupported";
   const send = (status, payload, headers = {}) => {
     recordAgentAudit(owner, action, status);
     return json(response, status, payload, headers);
@@ -620,17 +663,54 @@ async function handleAgentBusiness(request, response, url) {
     if (!agentRateAllowed(owner.token_hash)) return send(429, { error: "每个令牌每分钟最多 60 次请求" }, { "Retry-After": "60" });
     statements.touchAgentToken.run(Date.now(), owner.token_hash);
     if (!originAllowed(request)) return send(403, { error: "请求来源不受信任" });
+    if (action === "capabilities.read") {
+      return send(200, { apiVersion: "2.9.0", capabilities: [
+        { name: "data.read", method: "GET", path: "/api/agent/data", description: "读取完整方寸数据文档" },
+        { name: "data.update", method: "PUT", path: "/api/agent/data", description: "原子替换完整数据文档，使用 expectedRevision 防止覆盖并发修改" },
+        { name: "schedule.read", method: "GET", path: "/api/agent/schedule", description: "读取课表、项目与任务" },
+        { name: "tasks.create", method: "POST", path: "/api/agent/tasks", description: "创建任务" },
+        { name: "tasks.update", method: "PATCH", path: "/api/agent/tasks/:id", description: "编辑、完成或恢复任务" },
+        { name: "projects.create", method: "POST", path: "/api/agent/projects", description: "创建长期项目" },
+        { name: "projects.update", method: "PATCH", path: "/api/agent/projects/:id", description: "编辑项目与里程碑" },
+      ], safety: { deletes: "not_available", externalAccounts: "session_only", concurrency: "expectedRevision" } });
+    }
+    if (action === "data.read" || action === "data.update") {
+      const current = agentDocument(owner.user_id);
+      if (action === "data.read") return send(200, { data: current.document, revision: current.row?.revision || 0, updatedAt: current.row?.updatedAt || null });
+      const body = agentObject(await readJson(request, agentMaxBodyBytes));
+      const expectedRevision = body.expectedRevision;
+      if (!Number.isInteger(expectedRevision) || expectedRevision !== (current.row?.revision || 0)) return send(409, { error: "数据版本已变化，请重新读取后再提交", revision: current.row?.revision || 0 });
+      const document = body.data;
+      if (!validDocument(document)) throw agentError(400, "data 必须是有效的方寸数据文档，且不能超过服务端限制");
+      const saved = persistExternalDocument(owner.user_id, document);
+      return send(200, { data: document, ...saved });
+    }
     if (action === "schedule.read") {
       const { row, document } = agentDocument(owner.user_id);
-      return send(200, { tasks: document.tasks, courses: document.courses, semester: document.semester || {}, timeSlots: document.timeSlots, courseExceptions: document.courseExceptions, calendarRules: document.calendarRules || [], revision: row?.revision || 0, updatedAt: row?.updatedAt || null });
+      return send(200, { tasks: document.tasks, projects: document.projects, courses: document.courses, semester: document.semester || {}, timeSlots: document.timeSlots, courseExceptions: document.courseExceptions, calendarRules: document.calendarRules || [], revision: row?.revision || 0, updatedAt: row?.updatedAt || null });
     }
-    if (action === "tasks.create" || action === "tasks.update") {
+    if (action === "tasks.create" || action === "tasks.update" || action === "projects.create" || action === "projects.update") {
       const body = await readJson(request, agentMaxBodyBytes);
       const currentOwner = agentOwner(request);
       if (!activeAgent(currentOwner)) return send(401, { error: "Agent 令牌无效、已过期或已吊销" });
       owner = currentOwner;
       if (externalSyncing.has(owner.user_id)) return send(409, { error: "外部日历正在同步，请完成后重试" });
       const { document } = agentDocument(owner.user_id);
+      if (projectRoute) {
+        let existing = null;
+        if (projectMatch) {
+          let id;
+          try { id = decodeURIComponent(projectMatch[1]); } catch { throw agentError(400, "项目 ID 编码不正确"); }
+          if (!id || id.length > 120 || /[\u0000-\u001f\u007f]/.test(id)) throw agentError(400, "项目 ID 不正确");
+          existing = document.projects.find((project) => project.id === id);
+          if (!existing) return send(404, { error: "项目不存在" });
+        }
+        const project = validateAgentProject(body, existing);
+        if (existing) document.projects[document.projects.indexOf(existing)] = project; else document.projects.unshift(project);
+        if (!validDocument(document)) throw agentError(400, "日程内容过大，请先整理已有数据");
+        const saved = persistExternalDocument(owner.user_id, document);
+        return send(existing ? 200 : 201, { project, ...saved });
+      }
       let existing = null;
       if (taskMatch) {
         let id;
@@ -650,7 +730,7 @@ async function handleAgentBusiness(request, response, url) {
       const saved = persistExternalDocument(owner.user_id, document);
       return send(existing ? 200 : 201, { task, ...saved });
     }
-    if (url.pathname === "/api/agent/schedule" || url.pathname === "/api/agent/tasks" || taskMatch) return send(405, { error: "Agent v1 不支持此操作" }, { Allow: taskMatch ? "PATCH" : url.pathname.endsWith("schedule") ? "GET" : "POST" });
+    if (url.pathname === "/api/agent/schedule" || url.pathname === "/api/agent/tasks" || taskMatch || projectRoute) return send(405, { error: "Agent API 不支持此操作" }, { Allow: projectRoute ? (projectMatch ? "PATCH" : "POST") : taskMatch ? "PATCH" : url.pathname.endsWith("schedule") ? "GET" : "POST" });
     return send(404, { error: "接口不存在" });
   } catch (error) {
     // Do not log request data or raw exceptions from agent requests.
@@ -666,6 +746,9 @@ async function handleApi(request, response, url) {
   const user = requestUser(request);
   if (agentManagement) return handleAgentManagement(request, response, url, user);
   if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true, service: "fangcun", version: APP_VERSION, configured, time: new Date().toISOString() });
+  if (request.method === "GET" && url.pathname === "/api/v1/link/health") {
+    return json(response, 200, { ok: true, schema: LINK_SCHEMA, version: LINK_VERSION, transport: "not-connected", mode: "pull-only", snapshotRead: true, snapshotWrite: false, authenticated: Boolean(user), time: new Date().toISOString() });
+  }
   if (request.method === "GET" && url.pathname === "/api/auth/session") return json(response, 200, { configured, authenticated: Boolean(user), user: publicUser(user), registrationOpen: registrationOpen(), version: APP_VERSION });
   if (request.method === "GET" && url.pathname === "/api/integrations/outlook/callback") {
     try {
@@ -730,8 +813,8 @@ async function handleApi(request, response, url) {
     }
     clearFailures(request, "login", username);
     statements.touchLogin.run(new Date().toISOString(), loginUser.id);
-    createSession(loginUser.id, request, response);
-    return json(response, 200, { ok: true, user: publicUser(loginUser) });
+    const accessToken = createSession(loginUser.id, request, response);
+    return json(response, 200, { ok: true, user: publicUser(loginUser), ...(body.client === "flutter" ? { accessToken, tokenType: "Session", expiresIn: sessionMaxAge } : {}) });
   }
   if (request.method === "POST" && url.pathname === "/api/auth/logout") {
     const token = sessionToken(request);
@@ -740,6 +823,18 @@ async function handleApi(request, response, url) {
   }
   if (!configured) return json(response, 428, { error: "请先初始化管理员账号" });
   if (!user) return json(response, 401, { error: "请先登录" });
+  if (request.method === "GET" && url.pathname === "/api/v1/link/snapshot") {
+    const row = statements.getState.get(user.id);
+    return json(response, 200, buildSnapshot({
+      document: row ? parseDocument(row.document) || {} : {},
+      revision: row?.revision || 0,
+      updatedAt: row?.updatedAt || null,
+      dataState: row ? "live" : "empty",
+      source: "server",
+      user,
+      device: { id: "fangcun-server", kind: "phone", name: "方寸手机端", platform: "web" },
+    }));
+  }
   if (url.pathname === "/api/calendar/subscription") {
     if (request.method === "GET") {
       const subscription = statements.getCalendarTokenForUser.get(user.id);

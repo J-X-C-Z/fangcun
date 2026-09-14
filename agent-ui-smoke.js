@@ -51,7 +51,7 @@ const submit = () => context.createAgentToken({ preventDefault() {} });
 function pending() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; }
 
 async function main() {
-  check([...html.matchAll(/data-sync-tab="([^"]+)"/g)].map((match) => match[1]).join(",") === "account,calendar,files,agent", "Agent 接入必须为第四个同步标签");
+  check([...html.matchAll(/data-sync-tab="([^"]+)"/g)].map((match) => match[1]).join(",") === "account,link,calendar,files,agent", "手机互联与 Agent 接入标签顺序稳定");
   check(/<section class="admin-card"><form id="agentTokenForm"/.test(html) && /aria-describedby="agentTokenNameError"/.test(html), "表单复用卡片与相邻错误提示");
   check(app.includes('$("#cloudModal").addEventListener("close", clearAgentAccess)') && app.includes('("pagehide", clearAgentAccess)'), "弹窗关闭与页面退出均须清除令牌");
   check(!/localStorage|sessionStorage|console\./.test(source), "令牌管理不得持久化或记录明文");
