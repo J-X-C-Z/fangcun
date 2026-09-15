@@ -31,6 +31,21 @@ void main() {
     expect(fake.requests[2].headers['Authorization'], 'Session secret');
   });
 
+  test('falls back to the deployed Web API when v1 login is not routed', () async {
+    final fake = FakeTransport()
+      ..responses.add(const ServerHttpResponse(401, '{"error":"请先登录"}'))
+      ..responses.add(const ServerHttpResponse(200, '{"accessToken":"legacy","tokenType":"Session","expiresIn":10,"user":{}}'))
+      ..responses.add(const ServerHttpResponse(200, '{"data":{"tasks":[]},"revision":2}'));
+    final client = FangcunServerClient(baseUrl: Uri.parse('https://example.test'), transport: fake);
+
+    await client.login('alice', 'password');
+    await client.getData();
+
+    expect(fake.requests[0].uri.path, '/api/v1/auth/login');
+    expect(fake.requests[1].uri.path, '/api/auth/login');
+    expect(fake.requests[2].uri.path, '/api/data');
+  });
+
   test('reads and writes revisioned data', () async {
     final fake = FakeTransport()
       ..responses.add(const ServerHttpResponse(200, '{"accessToken":"t","tokenType":"Session","expiresIn":10,"user":{}}'))

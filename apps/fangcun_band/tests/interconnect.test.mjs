@@ -4,6 +4,7 @@ import { SourceTextModule, SyntheticModule, createContext } from "node:vm"
 
 const sent = []
 let stored = ""
+let storedActions = "[]"
 let failWrite = false
 const connection = {
   send({ data, success }) { sent.push(data); success() },
@@ -16,7 +17,9 @@ const storage = {
   set: async value => {
     if (failWrite) throw new Error("disk full")
     stored = value
-  }
+  },
+  getActions: async () => storedActions,
+  setActions: async value => { storedActions = value }
 }
 const context = createContext({ console, Promise, Number, JSON, String, Object })
 const source = readFileSync(new URL("../src/utils/interconnect.js", import.meta.url), "utf8")
@@ -49,6 +52,13 @@ assert.equal(sent.at(-1).transferId, "handshake")
 await deliver(frame("snapshot", "heartbeat", JSON.stringify({ type: "heartbeat" })))
 assert.equal(sent.at(-1).ok, true)
 assert.equal(sent.at(-1).transferId, "heartbeat")
+
+const actionTransferId = await link.sendAction({ action: "confirm", taskId: "task-1" })
+assert.equal(sent.at(-1).kind, "action")
+assert.equal(sent.at(-1).transferId, actionTransferId)
+assert.deepEqual(JSON.parse(sent.at(-1).data).taskId, "task-1")
+await deliver({ tag: "fangcun.link.ack", kind: "action", transferId: actionTransferId, ok: true })
+assert.equal(JSON.parse(storedActions).length, 0)
 
 await deliver({ data: JSON.stringify(frame("snapshot", "direct", JSON.stringify(snapshot(1)))) })
 assert.equal(link.getSnapshot().sync.revision, 1)

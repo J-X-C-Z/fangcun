@@ -45,6 +45,8 @@ class FangcunInterconnect {
     }
     this.parts = Object.create(null)
     this.snapshot = null
+    this.pendingActions = []
+    this.flushingActions = false
     this.listeners = []
     this.state = "unknown"
     this.conn.onmessage = data => this.receive(data && !data.tag && data.data != null ? data.data : data)
@@ -53,6 +55,7 @@ class FangcunInterconnect {
       logInfo("onopen", info)
       this.emit("open", info)
       this.setState("connected")
+      this.flushPendingActions()
     }
     this.conn.onclose = data => {
       const info = callbackInfo(data)
@@ -68,6 +71,7 @@ class FangcunInterconnect {
     }
     this.refreshState()
     this.loadSnapshot()
+    this.loadPendingActions()
   }
 
   setState(state) {
@@ -91,6 +95,7 @@ class FangcunInterconnect {
           else if (info.status === 2) this.setState("disconnected")
           else this.setState("unknown")
           resolve(info)
+          if (info.status === 1) this.flushPendingActions()
         },
         fail: (data, code) => {
           const info = callbackInfo(data, code)
@@ -160,6 +165,50 @@ class FangcunInterconnect {
     try { await this.send(message) } catch (e) { console.error("fangcun link ack", e) }
   }
 
+  async sendAction(action) {
+    const transferId = "action-" + Date.now() + "-" + Math.random().toString(36).slice(2)
+    const payload = Object.assign({ schema: DATA_TAG, type: "action" }, action || {})
+    this.pendingActions.push({ transferId, payload })
+    await this.savePendingActions()
+    this.flushPendingActions()
+    return transferId
+  }
+
+  async flushPendingActions() {
+    if (this.flushingActions || !this.pendingActions.length || this.state !== "connected") return
+    this.flushingActions = true
+    try {
+      for (const item of this.pendingActions) {
+        await this.send({ tag: DATA_TAG, kind: "action", transferId: item.transferId, data: JSON.stringify(item.payload), index: 0, total: 1 })
+      }
+    } catch (e) {
+      logInfo("action send deferred", e)
+    } finally {
+      this.flushingActions = false
+    }
+  }
+
+  async acknowledgeAction(transferId) {
+    const next = this.pendingActions.filter(item => item.transferId !== transferId)
+    if (next.length === this.pendingActions.length) return
+    this.pendingActions = next
+    await this.savePendingActions()
+    this.emit("actionAck", { transferId })
+  }
+
+  async loadPendingActions() {
+    try {
+      const values = safeParse(await storage.getActions())
+      this.pendingActions = Array.isArray(values) ? values.filter(item => item && item.transferId && item.payload) : []
+      this.flushPendingActions()
+    } catch (e) { console.error("fangcun link action storage", e) }
+  }
+
+  async savePendingActions() {
+    try { await storage.setActions(JSON.stringify(this.pendingActions)) }
+    catch (e) { console.error("fangcun link action storage", e) }
+  }
+
   async receive(raw) {
     const message = safeParse(raw)
     if (!message || !message.tag) {
@@ -172,12 +221,14 @@ class FangcunInterconnect {
     if (message.tag !== DATA_TAG) {
       if (message.tag === ACK_TAG) {
         logInfo("ack", message)
+        if (message.kind === "action" && message.ok && message.transferId) await this.acknowledgeAction(message.transferId)
         this.emit("ack", message)
       }
       return
     }
     if (message.kind === "snapshot") {
       await this.commitSnapshot(message.payload || message.data, message.transferId || message.messageId)
+      this.flushPendingActions()
       return
     }
     if (message.kind !== "chunk" || typeof message.data !== "string") return

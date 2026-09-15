@@ -5,8 +5,8 @@
     <div class="confirm-card column" if="{{status === 'pending'}}">
       <div class="card-head row"><div class="confirm-icon center"><div class="glyph check-glyph"><div class="check-stroke"></div></div></div><text class="source">智能识别</text><div class="badge center"><text class="badge-text">1/2</text></div></div>
       <text class="label">识别到任务</text>
-      <text class="task-title">完成大学物理作业</text>
-      <text class="task-time">明天 23:59</text>
+      <text class="task-title">{{task.title}}</text>
+      <text class="task-time">{{task.note}}</text>
       <div class="actions row">
         <input class="button secondary" type="button" value="忽略" onclick="ignore" />
         <input class="button primary" type="button" value="确认" onclick="confirm" />
@@ -25,10 +25,20 @@
 <script>
 import router from "@system.router"
 import haptic from "../../common/haptic"
+import link from "../../utils/interconnect.js"
+import { snapshotTasks } from "../../utils/snapshot.js"
 export default {
-  private: { status: "pending", motionClass: "enter-right" },
-  confirm() { haptic.medium(); this.status = "confirmed" },
-  ignore() { haptic.light(); this.status = "ignored" },
+  private: { status: "pending", motionClass: "enter-right", task: { id: "", title: "完成大学物理作业", due: "明天 23:59" } },
+  onShow() {
+    const tasks = snapshotTasks(link.getSnapshot(), 20).filter(task => !task.completed)
+    if (tasks.length) this.task = tasks[0]
+    this.status = "pending"
+  },
+  sendAction(action) {
+    link.sendAction({ action: action, taskId: this.task.id, at: new Date().toISOString() }).catch(() => {})
+  },
+  confirm() { haptic.medium(); this.status = "confirmed"; this.sendAction("confirm") },
+  ignore() { haptic.light(); this.status = "ignored"; this.sendAction("ignore") },
   goBack() { haptic.light(); router.back() },
   handleSwipe(e) {
     if (e.direction === "right") {

@@ -36,6 +36,7 @@ class MainActivity : FlutterActivity() {
         if (Build.VERSION.SDK_INT >= 26) {
             notifications.createNotificationChannel(NotificationChannel(notificationChannel, "方寸开发者事件", NotificationManager.IMPORTANCE_HIGH))
         }
+        if (BackgroundSyncStore.token(this) != null) BackgroundSyncScheduler.schedule(this)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -72,13 +73,31 @@ class MainActivity : FlutterActivity() {
                     result.success(mapOf("ok" to true))
                 }
                 "setDeveloperMode" -> result.success(mapOf("ok" to true, "native" to true))
+                "configureBackgroundSync" -> {
+                    val arguments = call.arguments as? Map<*, *>
+                    val serverUrl = arguments?.get("serverUrl") as? String
+                    val token = arguments?.get("token") as? String
+                    if (serverUrl.isNullOrBlank() || token.isNullOrBlank()) {
+                        result.success(mapOf("ok" to false, "error" to "missing_credentials"))
+                    } else {
+                        BackgroundSyncStore.save(this, serverUrl, token)
+                        BackgroundSyncScheduler.schedule(this)
+                        result.success(mapOf("ok" to true, "intervalMinutes" to 15))
+                    }
+                }
+                "clearBackgroundSync" -> {
+                    BackgroundSyncStore.clear(this)
+                    BackgroundSyncScheduler.cancel(this)
+                    result.success(mapOf("ok" to true))
+                }
                 "refreshWidget" -> result.success(mapOf("ok" to false, "native" to true, "state" to "unavailable", "note" to "Flutter host 当前未注册 Today Widget provider"))
                 "getWristbandCapabilities" -> result.success(jsonMap(wristband.capabilities()))
                 "getWristbandStatus" -> result.success(jsonMap(wristband.status()))
-                "connectWristband", "disconnectWristband", "syncWristband" -> {
+                "connectWristband", "disconnectWristband", "openWristbandApp", "syncWristband" -> {
                     val operation = when (call.method) {
                         "connectWristband" -> "connect"
                         "disconnectWristband" -> "disconnect"
+                        "openWristbandApp" -> "openApp"
                         else -> "sync"
                     }
                     val arguments = call.arguments as? Map<*, *>
@@ -87,6 +106,7 @@ class MainActivity : FlutterActivity() {
                             when (call.method) {
                                 "connectWristband" -> wristband.connect(jsonObject(arguments))
                                 "disconnectWristband" -> wristband.disconnect()
+                                "openWristbandApp" -> wristband.openApp(jsonObject(arguments))
                                 else -> wristband.sync(jsonObject(arguments))
                             }
                         } catch (_: Exception) {
@@ -94,6 +114,13 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(jsonMap(value).plus("operation" to operation))
                     }
+                }
+                "pollWristbandEvents" -> result.success(jsonValue(wristband.drainEvents()))
+                "pendingWristbandEvents" -> result.success(jsonValue(wristband.pendingEvents()))
+                "acknowledgeWristbandEvents" -> {
+                    val count = (call.arguments as? Number)?.toInt() ?: 0
+                    wristband.acknowledgeEvents(count)
+                    result.success(mapOf("ok" to true))
                 }
                 else -> result.notImplemented()
             }
@@ -144,6 +171,9 @@ class MainActivity : FlutterActivity() {
         JSONObject.NULL -> null
         is JSONObject -> jsonMap(value)
         is JSONArray -> (0 until value.length()).map { jsonValue(value.opt(it)) }
+        // JSONObject can contain Java arrays (for example the wearable
+        // permission list). Flutter's codec only accepts List, not String[].
+        is Array<*> -> value.map(::jsonValue)
         else -> value
     }
 

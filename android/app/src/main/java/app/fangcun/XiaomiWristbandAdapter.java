@@ -3,6 +3,7 @@ package app.fangcun;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import com.xiaomi.xms.wearable.Wearable;
 import com.xiaomi.xms.wearable.auth.AuthApi;
@@ -26,6 +27,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /** Xiaomi Wearable AAR adapter for the Fangcun phone-to-Vela protocol. */
 public final class XiaomiWristbandAdapter implements WristbandAdapter {
@@ -37,7 +39,11 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
     private static final int MAX_FRAME_BYTES = 2200;
     private static final int MAX_RETRIES = 3;
     private static final long ACK_TIMEOUT_MS = 2500L;
-    private static final long CONNECT_TIMEOUT_MS = 3500L;
+    // Flutter can ask for status immediately after process start. Mi Fitness
+    // may still be binding its wearable service at that point.
+    private static final long CONNECT_TIMEOUT_MS = 8000L;
+    private static final long NODE_RETRY_DELAY_MS = 600L;
+    private static final int MAX_NODE_DISCOVERY_ATTEMPTS = 4;
     private static final long[] RECONNECT_DELAYS_MS = {1000L, 2000L, 4000L, 8000L, 16000L};
 
     private final NodeApi nodeApi;
@@ -47,11 +53,20 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final Object transferLock = new Object();
+    private final ConcurrentLinkedQueue<JSONObject> incomingEvents = new ConcurrentLinkedQueue<>();
     private final OnMessageReceivedListener messageListener = this::onMessage;
     private final OnDataChangedListener connectionListener = this::onConnectionChanged;
     private final OnServiceConnectionListener serviceListener = new OnServiceConnectionListener() {
-        @Override public void onServiceConnected() { serviceConnectionStatus = "connected"; }
-        @Override public void onServiceDisconnected() { serviceConnectionStatus = "disconnected"; }
+        @Override public void onServiceConnected() {
+            serviceConnected = true;
+            serviceConnectionStatus = "connected";
+            serviceReady.countDown();
+        }
+        @Override public void onServiceDisconnected() {
+            serviceConnected = false;
+            serviceConnectionStatus = "disconnected";
+            serviceReady = new CountDownLatch(1);
+        }
     };
 
     private volatile Node activeNode;
@@ -62,10 +77,13 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
     private volatile boolean heartbeatRunning;
     private volatile boolean handshakeComplete;
     private volatile String lastError;
+    private volatile String lastEvent;
     private volatile int lastNodeCount;
     private volatile Boolean lastWearAppInstalled;
     private volatile Boolean lastPermissionsGranted;
     private volatile String serviceConnectionStatus = "unknown";
+    private volatile boolean serviceConnected;
+    private volatile CountDownLatch serviceReady = new CountDownLatch(1);
     private int reconnectAttempt;
 
     public XiaomiWristbandAdapter(Context context) {
@@ -111,6 +129,8 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
                 .put("listenersRegistered", listenersRegistered)
                 .put("lastRevision", lastRevision == null ? JSONObject.NULL : lastRevision)
                 .put("lastError", lastError == null ? JSONObject.NULL : lastError)
+                .put("lastEvent", lastEvent == null ? JSONObject.NULL : lastEvent)
+                .put("pendingEventCount", incomingEvents.size())
                 .put("nodeCount", lastNodeCount)
                 .put("wearAppInstalled", lastWearAppInstalled == null ? JSONObject.NULL : lastWearAppInstalled)
                 .put("permissionsGranted", lastPermissionsGranted == null ? JSONObject.NULL : lastPermissionsGranted);
@@ -203,21 +223,85 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
         return operationResult("sync", false, "ack_timeout");
     }
 
+    @Override
+    public org.json.JSONArray drainEvents() {
+        org.json.JSONArray result = new org.json.JSONArray();
+        JSONObject event;
+        while ((event = incomingEvents.poll()) != null) result.put(event);
+        return result;
+    }
+
+    @Override
+    public org.json.JSONArray pendingEvents() {
+        org.json.JSONArray result = new org.json.JSONArray();
+        for (JSONObject event : incomingEvents) result.put(event);
+        return result;
+    }
+
+    @Override
+    public void acknowledgeEvents(int count) {
+        for (int index = 0; index < Math.max(0, count); index++) {
+            if (incomingEvents.poll() == null) break;
+        }
+    }
+
     private void discoverAndPrepare(boolean requestPermission, CountDownLatch done) {
         state = STATE_CONNECTING;
         lastError = null;
         lastNodeCount = 0;
         lastWearAppInstalled = null;
         lastPermissionsGranted = null;
+        awaitServiceAndDiscover(requestPermission, done);
+    }
+
+    /**
+     * The old native shell normally gave Mi Fitness time to bind before it
+     * queried nodes. Flutter can call this immediately after launch, so make
+     * that ordering explicit and retry the first node query a few times.
+     */
+    private void awaitServiceAndDiscover(boolean requestPermission, CountDownLatch done) {
+        if (serviceConnected) {
+            queryConnectedNodes(requestPermission, done, 1);
+            return;
+        }
+        serviceApi.getServiceApiLevel()
+            .addOnSuccessListener(ignored -> queryConnectedNodes(requestPermission, done, 1))
+            .addOnFailureListener(error -> {
+                try { serviceReady.await(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                if (serviceConnected) queryConnectedNodes(requestPermission, done, 1);
+                else {
+                    state = STATE_ERROR;
+                    lastError = "wearable_service_unavailable";
+                    finishDiscovery(done);
+                }
+            });
+    }
+
+    private void queryConnectedNodes(boolean requestPermission, CountDownLatch done, int attempt) {
         nodeApi.getConnectedNodes()
             .addOnSuccessListener(nodes -> {
                 lastNodeCount = nodes == null ? 0 : nodes.size();
-                chooseNode(nodes, requestPermission, done);
+                if ((nodes == null || nodes.isEmpty())
+                    && serviceConnected
+                    && attempt < MAX_NODE_DISCOVERY_ATTEMPTS) {
+                    mainHandler.postDelayed(
+                        () -> queryConnectedNodes(requestPermission, done, attempt + 1),
+                        NODE_RETRY_DELAY_MS);
+                } else {
+                    chooseNode(nodes, requestPermission, done);
+                }
             })
             .addOnFailureListener(error -> {
-                state = STATE_ERROR;
-                lastError = "sdk_discovery_failed";
-                finishDiscovery(done);
+                if (serviceConnected && attempt < MAX_NODE_DISCOVERY_ATTEMPTS) {
+                    mainHandler.postDelayed(
+                        () -> queryConnectedNodes(requestPermission, done, attempt + 1),
+                        NODE_RETRY_DELAY_MS);
+                } else {
+                    state = STATE_ERROR;
+                    lastError = "sdk_discovery_failed";
+                    finishDiscovery(done);
+                }
             });
     }
 
@@ -392,12 +476,36 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
         if (node == null || !node.id.equals(nodeId) || bytes == null) return;
         try {
             JSONObject message = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            // Some Mi Fitness versions wrap interconnect payloads in a
+            // {"data":"..."} envelope on the way back to Android.
+            if (!message.has("tag") && message.optString("data", "").startsWith("{")) {
+                message = new JSONObject(message.optString("data"));
+            }
+            if (LINK_TAG.equals(message.optString("tag")) && "action".equals(message.optString("kind"))) {
+                String transferId = message.optString("transferId", "");
+                JSONObject action = new JSONObject(message.optString("data", "{}"));
+                incomingEvents.offer(action);
+                lastEvent = action.toString();
+                Log.i("FangcunWristband", "queued wearable action " + action);
+                sendActionAck(nodeId, transferId, true, null);
+                return;
+            }
+            Log.d("FangcunWristband", "received non-action message tag=" + message.optString("tag") + " kind=" + message.optString("kind"));
             if (!ACK_TAG.equals(message.optString("tag"))) return;
             PendingAck ack = pendingAck;
             if (ack == null || !ack.transferId.equals(message.optString("transferId"))) return;
             ack.ok = message.optBoolean("ok", false);
             ack.revision = message.optString("revision", null);
             ack.latch.countDown();
+        } catch (Exception ignored) {}
+    }
+
+    private void sendActionAck(String nodeId, String transferId, boolean ok, String error) {
+        JSONObject ack = new JSONObject();
+        try {
+            ack.put("tag", ACK_TAG).put("kind", "action").put("transferId", transferId).put("ok", ok);
+            if (error != null) ack.put("error", error);
+            messageApi.sendMessage(nodeId, ack.toString().getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) {}
     }
 

@@ -26,7 +26,8 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "app.fangcun.fangcun_devtools"
+        // Match the Vela RPK package for Xiaomi system.interconnect.
+        applicationId = "app.fangcun"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -68,6 +69,7 @@ tasks.named("preBuild").configure { dependsOn("syncSharedWristbandSources") }
 
 dependencies {
     implementation(files("../../../android/app/libs/xms-wearable-lib_1.4_release.aar"))
+    implementation("androidx.work:work-runtime:2.10.1")
 }
 
 kotlin {

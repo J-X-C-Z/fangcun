@@ -28,7 +28,7 @@
 
         <input class="exit-button" type="button" value="强制退出" onclick="forceExit" />
 
-        <text class="sync-note">账号与同步服务请在手机版管理 · 当前为只读预览</text>
+        <text class="sync-note">账号与同步服务请在手机版管理 · 手环操作将在下次同步回传</text>
         <text class="hint">右滑返回功能菜单</text>
       </div>
     </scroll>

@@ -185,8 +185,14 @@ class FangcunServerClient {
   final Uri _baseUrl;
   final ServerTransport _transport;
   String? _accessToken;
+  String _apiPrefix = '/api/v1';
 
   bool get isAuthenticated => _accessToken != null;
+  String? get accessToken => _accessToken;
+
+  void restoreSession(String accessToken) {
+    _accessToken = accessToken;
+  }
 
   static Uri _normaliseBaseUrl(Uri value) => value.path.endsWith('/')
       ? value.replace(path: value.path.substring(0, value.path.length - 1))
@@ -196,7 +202,26 @@ class FangcunServerClient {
 
   Future<JsonObject> health() => _send('GET', '/health', authenticated: false);
 
+  /// Public service probe used by the developer panel. Some deployments keep
+  /// the v1 health route behind auth while retaining the legacy public probe.
+  Future<JsonObject> publicHealth() => _sendRaw('GET', '/api/health');
+
   Future<SessionInfo> login(String username, String password) async {
+    try {
+      return await _login(username, password);
+    } on FangcunApiException catch (error) {
+      // schedule.woxingsf.top is currently served by the Web deployment,
+      // whose user/session endpoints are still under /api. A v1 request gets
+      // its generic unauthenticated response before it reaches a login route.
+      if (_shouldTryLegacyAuth(error)) {
+        _apiPrefix = '/api';
+        return _login(username, password);
+      }
+      rethrow;
+    }
+  }
+
+  Future<SessionInfo> _login(String username, String password) async {
     final result = await _send(
       'POST',
       '/auth/login',
@@ -221,10 +246,20 @@ class FangcunServerClient {
     );
   }
 
-  Future<JsonObject> session() => _send('GET', '/auth/session');
+  Future<JsonObject> session() async {
+    try {
+      return await _send('GET', '/auth/session');
+    } on FangcunApiException catch (error) {
+      if (_shouldTryLegacyAuth(error)) {
+        _apiPrefix = '/api';
+        return _send('GET', '/auth/session');
+      }
+      rethrow;
+    }
+  }
 
   Future<DataSnapshot> getData() async {
-    final result = await _send('GET', '/data');
+    final result = await _sendWithRouteFallback('GET', '/data');
     return DataSnapshot(
       data: result['data'],
       revision: _int(result['revision']),
@@ -233,7 +268,7 @@ class FangcunServerClient {
   }
 
   Future<DataWriteResult> putData(dynamic data, int baseRevision) async {
-    final result = await _send(
+    final result = await _sendWithRouteFallback(
       'PUT',
       '/data',
       body: {'data': data, 'baseRevision': baseRevision},
@@ -244,12 +279,29 @@ class FangcunServerClient {
     );
   }
 
-  Future<LinkHealth> linkHealth() async => LinkHealth.fromJson(
-    await _send('GET', '/link/health', authenticated: false),
-  );
+  Future<LinkHealth> linkHealth() async {
+    try {
+      return LinkHealth.fromJson(await _send('GET', '/link/health', authenticated: false));
+    } on FangcunApiException catch (error) {
+      if (_isMissingRoute(error)) {
+        _flipApiPrefix();
+        return LinkHealth.fromJson(await _send('GET', '/link/health', authenticated: false));
+      }
+      rethrow;
+    }
+  }
 
-  Future<LinkSnapshot> getLinkSnapshot() async =>
-      LinkSnapshot.fromJson(await _send('GET', '/link/snapshot'));
+  Future<LinkSnapshot> getLinkSnapshot() async {
+    try {
+      return LinkSnapshot.fromJson(await _send('GET', '/link/snapshot'));
+    } on FangcunApiException catch (error) {
+      if (_isMissingRoute(error)) {
+        _flipApiPrefix();
+        return LinkSnapshot.fromJson(await _send('GET', '/link/snapshot'));
+      }
+      rethrow;
+    }
+  }
 
   Future<void> logout() async {
     try {
@@ -265,6 +317,30 @@ class FangcunServerClient {
     bool authenticated = true,
     JsonObject? body,
   }) async {
+    return _sendRaw(method, '$_apiPrefix$path', authenticated: authenticated, body: body);
+  }
+
+  Future<JsonObject> _sendWithRouteFallback(
+    String method,
+    String path, {
+    bool authenticated = true,
+    JsonObject? body,
+  }) async {
+    try {
+      return await _send(method, path, authenticated: authenticated, body: body);
+    } on FangcunApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      _flipApiPrefix();
+      return _send(method, path, authenticated: authenticated, body: body);
+    }
+  }
+
+  Future<JsonObject> _sendRaw(
+    String method,
+    String path, {
+    bool authenticated = false,
+    JsonObject? body,
+  }) async {
     final headers = <String, String>{'Accept': 'application/json'};
     if (body != null) headers['Content-Type'] = 'application/json';
     if (authenticated && _accessToken != null) {
@@ -272,7 +348,7 @@ class FangcunServerClient {
     }
     final response = await _transport.request(
       method,
-      _uri('/api/v1$path'),
+      _uri(path),
       headers: headers,
       body: body == null ? null : jsonEncode(body),
     );
@@ -303,6 +379,21 @@ class FangcunServerClient {
 
   static JsonObject _object(dynamic value) =>
       value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+
+  bool _shouldTryLegacyAuth(FangcunApiException error) {
+    if (_apiPrefix != '/api/v1') return false;
+    if (error.statusCode != 401 && error.statusCode != 404) return false;
+    return const {'请先登录', '接口不存在', 'Not Found'}.contains(error.message);
+  }
+
+  bool _isMissingRoute(FangcunApiException error) =>
+      error.statusCode == 404 ||
+      error.statusCode == 405 ||
+      error.message.contains('接口不存在');
+
+  void _flipApiPrefix() {
+    _apiPrefix = _apiPrefix == '/api' ? '/api/v1' : '/api';
+  }
 
   static int _int(dynamic value) => value is num ? value.toInt() : 0;
 }

@@ -26,10 +26,7 @@ import { snapshotProjects } from "../../utils/snapshot.js"
 export default {
   private: {
     motionClass: "enter-right",
-    projects: [
-      { id: "demo-1", name: "蓝桥杯准备", progress: 62, progressWidth: 165, recent: "完成基础算法练习 12 题", next: "复习动态规划", color: "blue" },
-      { id: "demo-2", name: "方寸开发", progress: 81, progressWidth: 215, recent: "手环端静态界面", next: "验证手机通信", color: "teal" }
-    ]
+    projects: []
   },
   onShow() {
     this.updateSnapshot(link.getSnapshot())
@@ -43,7 +40,7 @@ export default {
   },
   updateSnapshot(snapshot) {
     const projects = snapshotProjects(snapshot)
-    if (projects) this.projects = projects
+    this.projects = projects || []
   },
   goBack() { haptic.light(); router.back() },
   handleSwipe(e) {

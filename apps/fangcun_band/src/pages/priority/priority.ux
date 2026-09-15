@@ -4,26 +4,11 @@
       <div class="content column">
         <div class="top-bar row"><text class="back" onclick="goBack">‹</text><text class="page-title">优先级</text><text class="clock">19:06</text></div>
 
-        <div class="group column">
-          <div class="group-head row"><div class="dot red"></div><div class="group-labels row"><text class="group-word">重要</text><text class="group-separator">·</text><text class="group-word">紧急</text></div><text class="group-count">2</text></div>
-          <div class="task row" onclick="toggleUrgentOne"><div class="check center {{urgentOneDone ? 'checked' : ''}}"><text class="check-mark">{{urgentOneDone ? '✓' : ''}}</text></div><text class="task-title {{urgentOneDone ? 'done' : ''}}">物理实验报告</text></div>
-          <div class="task row"><div class="check"></div><text class="task-title">明天考试复习</text></div>
+        <div class="group column" for="{{group in groups}}">
+          <div class="group-head row"><div class="dot {{group.color}}"></div><div class="group-labels row"><text class="group-word">{{group.importantLabel}}</text><text class="group-separator">·</text><text class="group-word">{{group.urgentLabel}}</text></div><text class="group-count">{{group.count}}</text></div>
+          <div class="task row" for="{{task in group.tasks}}" onclick="toggleTask(task.id)"><div class="check center {{task.completed ? 'checked' : ''}}"><text class="check-mark">{{task.completed ? '✓' : ''}}</text></div><text class="task-title {{task.completed ? 'done' : ''}}">{{task.title}}</text></div>
         </div>
-
-        <div class="group column">
-          <div class="group-head row"><div class="dot yellow"></div><div class="group-labels row"><text class="group-word">不重要</text><text class="group-separator">·</text><text class="group-word">紧急</text></div><text class="group-count">1</text></div>
-          <div class="task row"><div class="check"></div><text class="task-title">跑步 30 分钟</text></div>
-        </div>
-
-        <div class="group column">
-          <div class="group-head row"><div class="dot blue"></div><div class="group-labels row"><text class="group-word">重要</text><text class="group-separator">·</text><text class="group-word">不紧急</text></div><text class="group-count">1</text></div>
-          <div class="task row"><div class="check"></div><text class="task-title">C++ 作业</text></div>
-        </div>
-
-        <div class="group column">
-          <div class="group-head row"><div class="dot green"></div><div class="group-labels row"><text class="group-word">不重要</text><text class="group-separator">·</text><text class="group-word">不紧急</text></div><text class="group-count">1</text></div>
-          <div class="task row"><div class="check"></div><text class="task-title">BBC 英语听力</text></div>
-        </div>
+        <text class="empty">{{emptyText}}</text>
         <text class="hint">点击任务即可完成 · 右滑返回</text>
       </div>
     </scroll>
@@ -33,12 +18,54 @@
 <script>
 import router from "@system.router"
 import haptic from "../../common/haptic"
+import link from "../../utils/interconnect.js"
+import { snapshotTasks } from "../../utils/snapshot.js"
+
+function priorityGroups(tasks) {
+  const definitions = [
+    { color: "red", important: true, urgent: true, importantLabel: "重要", urgentLabel: "紧急" },
+    { color: "yellow", important: false, urgent: true, importantLabel: "不重要", urgentLabel: "紧急" },
+    { color: "blue", important: true, urgent: false, importantLabel: "重要", urgentLabel: "不紧急" },
+    { color: "green", important: false, urgent: false, importantLabel: "不重要", urgentLabel: "不紧急" }
+  ]
+  return definitions.map(definition => {
+    const groupTasks = tasks.filter(task => !!task.important === definition.important && !!task.urgent === definition.urgent)
+    return Object.assign({}, definition, { tasks: groupTasks, count: groupTasks.length })
+  }).filter(group => group.count)
+}
+
 export default {
-  private: { urgentOneDone: false, motionClass: "enter-right" },
-  toggleUrgentOne() {
-    const wasDone = this.urgentOneDone
-    this.urgentOneDone = !this.urgentOneDone
-    if (!wasDone && this.urgentOneDone) haptic.complete()
+  private: {
+    motionClass: "enter-right",
+    emptyText: "",
+    groups: []
+  },
+  onShow() {
+    this.updateSnapshot(link.getSnapshot())
+    this.stopLinkListener = link.on((event, snapshot) => {
+      if (event === "snapshot") this.updateSnapshot(snapshot)
+    })
+  },
+  onHide() {
+    if (this.stopLinkListener) this.stopLinkListener()
+    this.stopLinkListener = null
+  },
+  updateSnapshot(snapshot) {
+    const items = snapshot && snapshot.payload && snapshot.payload.tasks && snapshot.payload.tasks.items
+    if (!Array.isArray(items)) return
+    const tasks = snapshotTasks(snapshot, 20)
+    this.groups = priorityGroups(tasks)
+    this.emptyText = tasks.length ? "" : "暂无优先级任务"
+  },
+  toggleTask(id) {
+    this.groups.forEach(group => group.tasks.forEach(task => {
+      if (task.id === id) {
+        const wasCompleted = task.completed
+        task.completed = !task.completed
+        link.sendAction({ action: "setCompleted", taskId: id, completed: task.completed, at: new Date().toISOString() }).catch(() => {})
+        if (!wasCompleted && task.completed) haptic.complete()
+      }
+    }))
   },
   goBack() { haptic.light(); router.back() },
   handleSwipe(e) {
@@ -83,6 +110,7 @@ text { color: #ffffff; }
 .task-title { width: 226px; font-size: 21px; color: #ffffff; }
 .done { color: #777f8b; text-decoration: line-through; }
 .hint { width: 300px; margin-top: 10px; font-size: 16px; text-align: center; color: #7a8391; }
+.empty { width: 300px; margin-top: 28px; font-size: 18px; text-align: center; color: #8f98a8; }
 @keyframes enterRight { 0% { transform: translateX(32px); opacity: 0.2; } 100% { transform: translateX(0px); opacity: 1; } }
 @keyframes exitRight { 0% { transform: translateX(0px); opacity: 1; } 100% { transform: translateX(32px); opacity: 0.2; } }
 </style>

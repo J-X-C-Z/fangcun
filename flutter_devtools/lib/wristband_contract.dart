@@ -27,6 +27,7 @@ class WristbandCapabilities {
     this.note,
     this.features = const <String, bool>{},
     this.requiresPermissions = const <String>[],
+    this.raw = const <String, dynamic>{},
   });
 
   factory WristbandCapabilities.fromJson(Map<String, dynamic> json) {
@@ -43,6 +44,7 @@ class WristbandCapabilities {
       requiresPermissions: (json['requiresPermissions'] as List? ?? const <Object>[])
           .whereType<String>()
           .toList(growable: false),
+      raw: json,
     );
   }
 
@@ -53,8 +55,13 @@ class WristbandCapabilities {
   final String? note;
   final Map<String, bool> features;
   final List<String> requiresPermissions;
+  final Map<String, dynamic> raw;
 
   bool supports(String feature) => features[feature] == true;
+  String? get nodeName => raw['nodeName'] as String?;
+  String? get lastError => raw['lastError'] as String?;
+  int get nodeCount => (raw['nodeCount'] as num?)?.toInt() ?? 0;
+  String? get serviceConnection => raw['serviceConnection'] as String?;
 }
 
 class WristbandResult {
@@ -82,7 +89,26 @@ class WristbandClient {
   Future<WristbandCapabilities> status() async => WristbandCapabilities.fromJson(await _call('getWristbandStatus'));
   Future<WristbandResult> connect([Map<String, dynamic> options = const {}]) async => WristbandResult.fromJson(await _call('connectWristband', options));
   Future<WristbandResult> disconnect() async => WristbandResult.fromJson(await _call('disconnectWristband'));
+  Future<WristbandResult> openApp([Map<String, dynamic> options = const {}]) async => WristbandResult.fromJson(await _call('openWristbandApp', options));
   Future<WristbandResult> sync(Map<String, dynamic> payload) async => WristbandResult.fromJson(await _call('syncWristband', payload));
+  Future<List<Map<String, dynamic>>> pollEvents() async {
+    try {
+      final value = await _channel.invokeMethod<dynamic>('pendingWristbandEvents');
+      if (value is List) return value.whereType<Map>().map((event) => Map<String, dynamic>.from(event)).toList();
+    } on MissingPluginException {
+      return const <Map<String, dynamic>>[];
+    }
+    return const <Map<String, dynamic>>[];
+  }
+
+  Future<void> acknowledgeEvents(int count) async {
+    if (count <= 0) return;
+    try {
+      await _channel.invokeMethod<dynamic>('acknowledgeWristbandEvents', count);
+    } on MissingPluginException {
+      // Older builds have no event queue; there is nothing to acknowledge.
+    }
+  }
 
   Future<Map<String, dynamic>> _call(String method, [Object? arguments]) async {
     try {
