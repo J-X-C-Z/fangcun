@@ -8,7 +8,10 @@
           <div class="connection-dot"></div>
           <div class="column"><text class="connection-title">数据同步</text><text class="connection-note">{{connectionNote}}</text></div>
         </div>
+<<<<<<< HEAD
         <text class="diagnosis-note">{{diagnosisNote}}</text>
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
         <div class="setting row">
           <div class="setting-icon amber center"><div class="glyph vibration-glyph"><div class="vibe-short"></div><div class="vibe-long"></div></div></div>
@@ -28,7 +31,11 @@
 
         <input class="exit-button" type="button" value="强制退出" onclick="forceExit" />
 
+<<<<<<< HEAD
         <text class="sync-note">账号与同步服务请在手机版管理 · 手环操作将在下次同步回传</text>
+=======
+        <text class="sync-note">账号与同步服务请在手机版管理 · 当前为只读预览</text>
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
         <text class="hint">右滑返回功能菜单</text>
       </div>
     </scroll>
@@ -41,6 +48,7 @@ import app from "@system.app"
 import haptic from "../../common/haptic"
 import link from "../../utils/interconnect.js"
 export default {
+<<<<<<< HEAD
   private: { motionClass: "enter-right", connectionNote: "fangcun.link.v1 · 等待手机连接", diagnosisNote: "连接诊断待运行" },
   onShow() {
     this.updateConnection(link.getState())
@@ -59,6 +67,11 @@ export default {
     this.stopLinkListener = null
   },
   updateConnection(state) {
+=======
+  private: { motionClass: "enter-right", connectionNote: "fangcun.link.v1 · 等待手机连接" },
+  onShow() {
+    const state = link.getState()
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     this.connectionNote = state === "connected" ? "fangcun.link.v1 · 手机已连接" : "fangcun.link.v1 · 等待手机连接"
   },
   goBack() { haptic.light(); router.back() },
@@ -91,7 +104,10 @@ text { color: #ffffff; }
 .connection-dot { width: 14px; height: 14px; margin-right: 14px; border-radius: 7px; background-color: #35d586; }
 .connection-title { font-size: 22px; font-weight: 700; color: #ffffff; }
 .connection-note { margin-top: 5px; font-size: 16px; color: #8e9d95; }
+<<<<<<< HEAD
 .diagnosis-note { width: 300px; margin-bottom: 10px; font-size: 16px; color: #8e9d95; }
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 .setting { width: 300px; height: 84px; margin-bottom: 10px; padding-left: 14px; padding-right: 14px; align-items: center; border-radius: 18px; background-color: #1b1f24; }
 .setting-icon { width: 44px; height: 44px; margin-right: 14px; border-radius: 22px; }
 .amber { background-color: #a96a18; }

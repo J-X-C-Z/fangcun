@@ -33,6 +33,7 @@ import { snapshotSchedule } from "../../utils/snapshot.js"
 
 export default {
   private: {
+<<<<<<< HEAD
     schedule: []
   },
   onShow() {
@@ -48,6 +49,18 @@ export default {
   updateSnapshot(snapshot) {
     const schedule = snapshotSchedule(snapshot)
     this.schedule = schedule
+=======
+    schedule: [
+      { time: "10:00", title: "英语", location: "语音室", duration: "90 分钟", active: false },
+      { time: "14:32", title: "大学物理", location: "A301", duration: "88 分钟", active: true },
+      { time: "16:00", title: "高等数学", location: "B204", duration: "90 分钟", active: false },
+      { time: "19:30", title: "社团会议", location: "线上", duration: "60 分钟", active: false }
+    ]
+  },
+  onShow() {
+    const schedule = snapshotSchedule(link.getSnapshot())
+    if (schedule.length) this.schedule = schedule
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   },
   handleSwipe(e) {
     if (e.direction === "right") { haptic.light(); router.back() }

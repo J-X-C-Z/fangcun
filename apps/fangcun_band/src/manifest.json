@@ -1,8 +1,13 @@
 {
   "package": "app.fangcun",
   "name": "方寸",
+<<<<<<< HEAD
   "versionName": "0.2.4",
   "versionCode": 6,
+=======
+  "versionName": "0.1.0",
+  "versionCode": 1,
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   "minPlatformVersion": 1000,
   "icon": "/common/logo.png",
   "deviceTypeList": [

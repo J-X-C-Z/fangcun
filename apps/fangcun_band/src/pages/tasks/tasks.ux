@@ -30,6 +30,7 @@ import { snapshotTasks } from "../../utils/snapshot.js"
 
 export default {
   private: {
+<<<<<<< HEAD
     tasks: []
   },
   onShow() {
@@ -54,6 +55,23 @@ export default {
         link.sendAction({ action: "setCompleted", taskId: id, completed: task.completed, at: new Date().toISOString() }).catch(() => {})
         if (!wasCompleted && task.completed) haptic.complete()
       }
+=======
+    tasks: [
+      { id: "task_001", title: "物理实验报告", note: "今天 18:00 截止", priority: "red", completed: false },
+      { id: "task_002", title: "C++ 作业", note: "预计 45 分钟", priority: "blue", completed: false },
+      { id: "task_003", title: "背单词", note: "已完成", priority: "green", completed: true },
+      { id: "task_004", title: "准备社团会议", note: "19:30 前", priority: "yellow", completed: false }
+    ]
+  },
+  onShow() {
+    const tasks = snapshotTasks(link.getSnapshot(), 20)
+    if (tasks.length) this.tasks = tasks
+  },
+  toggleTask(id) {
+    haptic.medium()
+    this.tasks.forEach(task => {
+      if (task.id === id) task.completed = !task.completed
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     })
   },
   handleSwipe(e) {

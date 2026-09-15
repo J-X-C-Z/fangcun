@@ -1,11 +1,15 @@
+<<<<<<< HEAD
 import org.gradle.api.tasks.Copy
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+<<<<<<< HEAD
 val sharedWristbandSources = layout.buildDirectory.dir("generated/shared-wristband-sources")
 tasks.register<Copy>("syncSharedWristbandSources") {
     from(file("../../../android/app/src/main/java/app/fangcun"))
@@ -13,6 +17,8 @@ tasks.register<Copy>("syncSharedWristbandSources") {
     into(sharedWristbandSources)
 }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 android {
     namespace = "app.fangcun.fangcun_devtools"
     compileSdk = flutter.compileSdkVersion
@@ -26,8 +32,12 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+<<<<<<< HEAD
         // Match the Vela RPK package for Xiaomi system.interconnect.
         applicationId = "app.fangcun"
+=======
+        applicationId = "app.fangcun.fangcun_devtools"
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -40,6 +50,7 @@ android {
         versionName = flutter.versionName
     }
 
+<<<<<<< HEAD
     // Reuse the production adapter source while Flutter replaces the WebView
     // shell. Keeping one adapter implementation prevents protocol drift.
     sourceSets {
@@ -48,6 +59,8 @@ android {
         }
     }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
@@ -65,6 +78,7 @@ android {
     }
 }
 
+<<<<<<< HEAD
 tasks.named("preBuild").configure { dependsOn("syncSharedWristbandSources") }
 
 dependencies {
@@ -72,6 +86,8 @@ dependencies {
     implementation("androidx.work:work-runtime:2.10.1")
 }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

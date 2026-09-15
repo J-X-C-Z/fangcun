@@ -7,11 +7,14 @@ import 'dart:io';
 
 typedef JsonObject = Map<String, dynamic>;
 
+<<<<<<< HEAD
 int _jsonInt(dynamic value) => value is num ? value.toInt() : 0;
 
 JsonObject _jsonObject(dynamic value) =>
     value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 class ServerHttpResponse {
   const ServerHttpResponse(this.statusCode, this.body);
 
@@ -99,11 +102,15 @@ class SessionInfo {
 }
 
 class DataSnapshot {
+<<<<<<< HEAD
   const DataSnapshot({
     required this.data,
     required this.revision,
     this.updatedAt,
   });
+=======
+  const DataSnapshot({required this.data, required this.revision, this.updatedAt});
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
   final dynamic data;
   final int revision;
@@ -117,6 +124,7 @@ class DataWriteResult {
   final String? updatedAt;
 }
 
+<<<<<<< HEAD
 class LinkHealth {
   const LinkHealth({
     required this.schema,
@@ -181,10 +189,19 @@ class FangcunServerClient {
   FangcunServerClient({required Uri baseUrl, ServerTransport? transport})
     : _baseUrl = _normaliseBaseUrl(baseUrl),
       _transport = transport ?? IoServerTransport();
+=======
+class FangcunServerClient {
+  FangcunServerClient({
+    required Uri baseUrl,
+    ServerTransport? transport,
+  })  : _baseUrl = _normaliseBaseUrl(baseUrl),
+        _transport = transport ?? IoServerTransport();
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
   final Uri _baseUrl;
   final ServerTransport _transport;
   String? _accessToken;
+<<<<<<< HEAD
   String _apiPrefix = '/api/v1';
 
   bool get isAuthenticated => _accessToken != null;
@@ -193,6 +210,10 @@ class FangcunServerClient {
   void restoreSession(String accessToken) {
     _accessToken = accessToken;
   }
+=======
+
+  bool get isAuthenticated => _accessToken != null;
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
   static Uri _normaliseBaseUrl(Uri value) => value.path.endsWith('/')
       ? value.replace(path: value.path.substring(0, value.path.length - 1))
@@ -202,6 +223,7 @@ class FangcunServerClient {
 
   Future<JsonObject> health() => _send('GET', '/health', authenticated: false);
 
+<<<<<<< HEAD
   /// Public service probe used by the developer panel. Some deployments keep
   /// the v1 health route behind auth while retaining the legacy public probe.
   Future<JsonObject> publicHealth() => _sendRaw('GET', '/api/health');
@@ -235,6 +257,18 @@ class FangcunServerClient {
         token.isEmpty ||
         tokenType != 'Session' ||
         expiresIn is! num) {
+=======
+  Future<SessionInfo> login(String username, String password) async {
+    final result = await _send('POST', '/auth/login', authenticated: false, body: {
+      'username': username,
+      'password': password,
+      'client': 'flutter',
+    });
+    final token = result['accessToken'];
+    final tokenType = result['tokenType'];
+    final expiresIn = result['expiresIn'];
+    if (token is! String || token.isEmpty || tokenType != 'Session' || expiresIn is! num) {
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
       throw const FormatException('登录响应缺少有效的 Session 令牌信息');
     }
     _accessToken = token;
@@ -246,6 +280,7 @@ class FangcunServerClient {
     );
   }
 
+<<<<<<< HEAD
   Future<JsonObject> session() async {
     try {
       return await _send('GET', '/auth/session');
@@ -260,6 +295,12 @@ class FangcunServerClient {
 
   Future<DataSnapshot> getData() async {
     final result = await _sendWithRouteFallback('GET', '/data');
+=======
+  Future<JsonObject> session() => _send('GET', '/auth/session');
+
+  Future<DataSnapshot> getData() async {
+    final result = await _send('GET', '/data');
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     return DataSnapshot(
       data: result['data'],
       revision: _int(result['revision']),
@@ -268,17 +309,25 @@ class FangcunServerClient {
   }
 
   Future<DataWriteResult> putData(dynamic data, int baseRevision) async {
+<<<<<<< HEAD
     final result = await _sendWithRouteFallback(
       'PUT',
       '/data',
       body: {'data': data, 'baseRevision': baseRevision},
     );
+=======
+    final result = await _send('PUT', '/data', body: {
+      'data': data,
+      'baseRevision': baseRevision,
+    });
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     return DataWriteResult(
       revision: _int(result['revision']),
       updatedAt: result['updatedAt'] as String?,
     );
   }
 
+<<<<<<< HEAD
   Future<LinkHealth> linkHealth() async {
     try {
       return LinkHealth.fromJson(await _send('GET', '/link/health', authenticated: false));
@@ -303,6 +352,8 @@ class FangcunServerClient {
     }
   }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   Future<void> logout() async {
     try {
       await _send('POST', '/auth/logout');
@@ -317,6 +368,7 @@ class FangcunServerClient {
     bool authenticated = true,
     JsonObject? body,
   }) async {
+<<<<<<< HEAD
     return _sendRaw(method, '$_apiPrefix$path', authenticated: authenticated, body: body);
   }
 
@@ -341,6 +393,8 @@ class FangcunServerClient {
     bool authenticated = false,
     JsonObject? body,
   }) async {
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     final headers = <String, String>{'Accept': 'application/json'};
     if (body != null) headers['Content-Type'] = 'application/json';
     if (authenticated && _accessToken != null) {
@@ -348,7 +402,11 @@ class FangcunServerClient {
     }
     final response = await _transport.request(
       method,
+<<<<<<< HEAD
       _uri(path),
+=======
+      _uri('/api/v1$path'),
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
       headers: headers,
       body: body == null ? null : jsonEncode(body),
     );
@@ -377,6 +435,7 @@ class FangcunServerClient {
     return decoded ?? (throw const FormatException('服务器响应不是 JSON 对象'));
   }
 
+<<<<<<< HEAD
   static JsonObject _object(dynamic value) =>
       value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
 
@@ -394,6 +453,11 @@ class FangcunServerClient {
   void _flipApiPrefix() {
     _apiPrefix = _apiPrefix == '/api' ? '/api/v1' : '/api';
   }
+=======
+  static JsonObject _object(dynamic value) => value is Map
+      ? Map<String, dynamic>.from(value)
+      : <String, dynamic>{};
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
   static int _int(dynamic value) => value is num ? value.toInt() : 0;
 }

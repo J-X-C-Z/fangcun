@@ -18,11 +18,14 @@ public interface WristbandAdapter {
     JSONObject disconnect();
     JSONObject sync(JSONObject payload);
 
+<<<<<<< HEAD
     /** Drain user actions received from the wearable since the last poll. */
     default org.json.JSONArray drainEvents() { return new org.json.JSONArray(); }
     default org.json.JSONArray pendingEvents() { return drainEvents(); }
     default void acknowledgeEvents(int count) { for (int i = 0; i < count; i++) drainEvents(); }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     default JSONObject openApp(JSONObject options) {
         JSONObject result = new JSONObject();
         try { result.put("ok", false).put("error", "unsupported"); }

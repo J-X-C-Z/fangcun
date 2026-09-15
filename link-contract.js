@@ -43,6 +43,7 @@
     };
   }
 
+<<<<<<< HEAD
   function normalizeProject(project, tasks) {
     const milestones = list(project.milestones).map((item) => ({
       id: text(item.id), title: text(item.title, "未命名里程碑"), due: text(item.due), completed: item.completed === true,
@@ -66,11 +67,16 @@
     };
   }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   function buildPayload(document, now = new Date()) {
     const today = localDate(now);
     const tasks = list(document && document.tasks).map(normalizeTask);
     const courses = list(document && document.courses).map(normalizeCourse);
+<<<<<<< HEAD
     const projects = list(document && document.projects).map((project) => normalizeProject(project, tasks));
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     const scheduleItems = courses.filter((course) => course.day >= 1 && course.day <= 7).map((course) => ({
       id: course.id, kind: "course", title: course.name, location: course.location,
       day: course.day, startSection: course.startSection, endSection: course.endSection, color: course.color,
@@ -80,7 +86,10 @@
       deviceStatus: { state: "ready", battery: null, charging: null, firmware: null },
       schedule: { date: today, items: scheduleItems },
       tasks: { date: today, pendingCount: taskItems.length, items: taskItems.slice(0, 20) },
+<<<<<<< HEAD
       projects: { count: projects.length, pendingActionCount: projects.reduce((count, project) => count + project.pendingActions.length, 0), items: projects.slice(0, 20) },
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
       syncState: { mode: "pull-only", cursor: null, canWrite: false, transport: "not-connected" },
     };
   }
@@ -99,6 +108,7 @@
     };
   }
 
+<<<<<<< HEAD
   function validateSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return false;
     if (snapshot.schema !== SCHEMA || snapshot.version !== VERSION || snapshot.type !== "snapshot") return false;
@@ -108,6 +118,8 @@
     return true;
   }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   function buildMockSnapshot() {
     return buildSnapshot({
       dataState: "mock", source: "local-fixture", revision: 0,
@@ -118,5 +130,9 @@
     });
   }
 
+<<<<<<< HEAD
   return { SCHEMA, VERSION, DATA_STATES, buildPayload, buildSnapshot, validateSnapshot, buildMockSnapshot, localDate };
+=======
+  return { SCHEMA, VERSION, DATA_STATES, buildPayload, buildSnapshot, buildMockSnapshot, localDate };
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 });

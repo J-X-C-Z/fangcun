@@ -98,6 +98,7 @@ public final class DeveloperOverlayView extends FrameLayout {
         Button inspect = plainButton(context, "查看设备能力");
         inspect.setOnClickListener(view -> showCapabilities());
         content.addView(inspect, rowParams());
+<<<<<<< HEAD
         addSection(content, "小米手环连接");
         Button checkWristband = plainButton(context, "检查连接并请求权限");
         checkWristband.setOnClickListener(view -> runWristbandAction("连接检查", true));
@@ -108,6 +109,8 @@ public final class DeveloperOverlayView extends FrameLayout {
         Button readWristband = plainButton(context, "读取当前手环状态");
         readWristband.setOnClickListener(view -> showWristbandStatus());
         content.addView(readWristband, rowParams());
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
         eventLog = label(context, "尚未触发事件", 11, MUTED);
         eventLog.setPadding(dp(10), dp(10), dp(10), dp(10));
         eventLog.setBackground(round(PANEL, 12));
@@ -162,6 +165,7 @@ public final class DeveloperOverlayView extends FrameLayout {
         eventLog.setText(capabilities.toString());
     }
 
+<<<<<<< HEAD
     private void showWristbandStatus() {
         JSONObject wristband = nativeModule.wristbandStatus();
         status.setText(statusText(wristband));
@@ -208,6 +212,8 @@ public final class DeveloperOverlayView extends FrameLayout {
         postDelayed(action, 0);
     }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     private void appendLog(String event) {
         String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
         eventLog.setText(time + "  " + event + "\n" + eventLog.getText());

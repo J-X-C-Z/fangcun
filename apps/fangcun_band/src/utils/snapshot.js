@@ -11,7 +11,10 @@ function snapshotTasks(snapshot, limit) {
   const list = payloadOf(snapshot).tasks && payloadOf(snapshot).tasks.items
   return (Array.isArray(list) ? list : []).slice(0, limit || 20).map(item => ({
     id: item.id || "task-" + Math.random().toString(36).slice(2),
+<<<<<<< HEAD
     projectId: item.projectId || "",
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     title: item.title || "未命名任务",
     note: item.dueTime ? `${item.due || ""} ${item.dueTime}`.trim() : (item.due || ""),
     priority: priorityOf(item),
@@ -31,6 +34,7 @@ function snapshotSchedule(snapshot) {
   }))
 }
 
+<<<<<<< HEAD
 function projectItems(snapshot) {
   const payload = payloadOf(snapshot)
   if (Array.isArray(payload.projects)) return payload.projects
@@ -77,3 +81,6 @@ function snapshotProjects(snapshot, limit) {
 }
 
 export { payloadOf, snapshotTasks, snapshotSchedule, snapshotProjects }
+=======
+export { payloadOf, snapshotTasks, snapshotSchedule }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89

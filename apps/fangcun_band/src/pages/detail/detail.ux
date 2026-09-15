@@ -14,11 +14,15 @@ import router from "@system.router"
 import haptic from "../../common/haptic"
 export default {
   private: { completed: false, motionClass: "enter-right" },
+<<<<<<< HEAD
   toggleComplete() {
     const wasCompleted = this.completed
     this.completed = !this.completed
     if (!wasCompleted && this.completed) haptic.complete()
   },
+=======
+  toggleComplete() { haptic.medium(); this.completed = !this.completed },
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   goBack() { haptic.light(); router.back() },
   handleSwipe(e) {
     if (e.direction === "right") {

@@ -96,7 +96,10 @@ let waitingServiceWorker = null;
 let focusRotation = 0;
 let pendingScheduleImport = null;
 let currentLinkSnapshot = null;
+<<<<<<< HEAD
 let automaticLinkSync = null;
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
 function accountKey(base) {
   return currentUser?.id ? `${base}:user-${currentUser.id}` : base;
@@ -679,12 +682,19 @@ function renderLinkSnapshot(snapshot) {
   const payload = snapshot.payload || {};
   const tasks = payload.tasks?.items || [];
   const schedule = payload.schedule?.items || [];
+<<<<<<< HEAD
   const projects = payload.projects?.items || (Array.isArray(payload.projects) ? payload.projects : []);
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   const stateLabels = { mock: "模拟数据", live: "已读取", stale: "数据较旧", empty: "暂无数据" };
   const state = snapshot.dataState || "empty";
   const pill = $("#linkStatePill");
   if (pill) { pill.textContent = stateLabels[state] || state; pill.dataset.state = state; }
+<<<<<<< HEAD
   $("#linkSummaryGrid").innerHTML = `<div class="link-summary-card"><strong>${tasks.length}</strong><span>待完成任务</span></div><div class="link-summary-card"><strong>${schedule.length}</strong><span>今日安排</span></div><div class="link-summary-card"><strong>${projects.length}</strong><span>长期项目</span></div><div class="link-summary-card"><strong>${snapshot.sync?.revision || 0}</strong><span>数据版本</span></div>`;
+=======
+  $("#linkSummaryGrid").innerHTML = `<div class="link-summary-card"><strong>${tasks.length}</strong><span>待完成任务</span></div><div class="link-summary-card"><strong>${schedule.length}</strong><span>今日安排</span></div><div class="link-summary-card"><strong>${snapshot.sync?.revision || 0}</strong><span>数据版本</span></div>`;
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   $("#linkDeviceCard").innerHTML = `<div><span class="eyebrow">设备状态</span><strong>${escapeHTML(snapshot.device?.name || "方寸手机端")}</strong></div><span class="link-muted">${state === "mock" ? "本地模拟 · 未连接设备" : `只读快照 · ${snapshot.sync?.mode || "pull-only"}`}</span>`;
   $("#linkScheduleDate").textContent = payload.schedule?.date || "—";
   $("#linkTaskDate").textContent = payload.tasks?.date || "—";
@@ -698,6 +708,7 @@ function parseNativeResult(value) {
   try { return typeof value === "string" ? JSON.parse(value) : value; } catch { return null; }
 }
 
+<<<<<<< HEAD
 function buildValidatedLinkSnapshot({ document = data, revision = syncState.revision, updatedAt = syncState.updatedAt, source = "server" } = {}) {
   const contract = window.FangcunLinkContract;
   if (!contract || typeof contract.buildSnapshot !== "function" || typeof contract.validateSnapshot !== "function") return null;
@@ -766,17 +777,24 @@ async function syncLatestLinkSnapshot(options = {}) {
   return automaticLinkSync;
 }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 async function syncLinkToWristband() {
   const button = $("#syncLinkWristbandBtn");
   if (!isNativeAndroid() || typeof window.FangcunNative?.syncWristband !== "function") {
     return showToast("请在方寸 Android App 中使用手环同步");
   }
+<<<<<<< HEAD
   // A mock preview can remain in memory after the user signs in. Always
   // refresh the authenticated snapshot before a real wearable transfer.
   if (syncState.authenticated || !currentLinkSnapshot) await loadLinkSnapshot();
   if (!currentLinkSnapshot) return showToast("没有可同步的数据");
   const contract = window.FangcunLinkContract;
   if (!contract?.validateSnapshot?.(currentLinkSnapshot)) return showToast("手环数据校验失败");
+=======
+  if (!currentLinkSnapshot) await loadLinkSnapshot();
+  if (!currentLinkSnapshot) return showToast("没有可同步的数据");
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   if (button) { button.disabled = true; button.textContent = "连接中…"; }
   try {
     const connected = parseNativeResult(window.FangcunNative.connectWristband(JSON.stringify({}))) || {};
@@ -784,7 +802,10 @@ async function syncLinkToWristband() {
     if (button) button.textContent = "传输中…";
     const result = parseNativeResult(window.FangcunNative.syncWristband(JSON.stringify(currentLinkSnapshot))) || {};
     if (!result.ok) throw new Error(result.error || "传输失败");
+<<<<<<< HEAD
     updateSyncMeta({ lastWristbandRevision: Number(currentLinkSnapshot.sync?.revision || 0) });
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     $("#linkSnapshotMeta").textContent = `已发送到手环 · 版本 ${currentLinkSnapshot.sync?.revision || 0}`;
     showToast("已同步到手环");
   } catch (error) {
@@ -803,7 +824,10 @@ async function loadLinkSnapshot() {
     let snapshot;
     if (syncState.authenticated) snapshot = await apiRequest("/api/v1/link/snapshot");
     else snapshot = window.FangcunLinkContract?.buildMockSnapshot();
+<<<<<<< HEAD
     if (!window.FangcunLinkContract?.validateSnapshot?.(snapshot)) throw new Error("手环快照契约校验失败");
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     renderLinkSnapshot(snapshot);
   } catch (error) {
     renderLinkSnapshot(window.FangcunLinkContract?.buildMockSnapshot());

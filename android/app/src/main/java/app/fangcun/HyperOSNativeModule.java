@@ -53,9 +53,12 @@ public final class HyperOSNativeModule {
     public JSONObject connectWristband(JSONObject options) { return wristband.connect(options); }
     public JSONObject disconnectWristband() { return wristband.disconnect(); }
     public JSONObject syncWristband(JSONObject payload) { return wristband.sync(payload); }
+<<<<<<< HEAD
     public org.json.JSONArray pollWristbandEvents() { return wristband.drainEvents(); }
     public org.json.JSONArray pendingWristbandEvents() { return wristband.pendingEvents(); }
     public void acknowledgeWristbandEvents(int count) { wristband.acknowledgeEvents(count); }
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     public JSONObject openWristbandApp(JSONObject options) { return wristband.openApp(options); }
     public JSONObject snapshot() { return snapshots.read(); }
     public void saveTodaySnapshot(String payload) {

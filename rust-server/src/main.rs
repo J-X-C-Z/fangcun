@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 mod sync;
+<<<<<<< HEAD
 mod agent;
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
 use axum::{
     body::Body,
@@ -13,22 +16,33 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+<<<<<<< HEAD
 use chrono::{FixedOffset, NaiveDate, Utc};
+=======
+use chrono::Utc;
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 use fangcun_core::validate;
 use rand::{rngs::OsRng, TryRngCore};
 use rusqlite::{params, Connection, OptionalExtension};
 use scrypt::{scrypt, Params as ScryptParams};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+<<<<<<< HEAD
 use std::{collections::{HashMap, HashSet}, env, net::SocketAddr, path::PathBuf, sync::{Arc, Mutex}};
 
 const VERSION: &str = "2.8.0";
 const LINK_SCHEMA: &str = "fangcun.link.v1";
 const LINK_VERSION: i64 = 1;
+=======
+use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::{Arc, Mutex}};
+
+const VERSION: &str = "2.7.0";
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 const SESSION_AGE: i64 = 30 * 24 * 60 * 60;
 type Db = Arc<Mutex<Connection>>;
 
 #[derive(Clone)]
+<<<<<<< HEAD
 struct AppState {
     db: Db,
     root: PathBuf,
@@ -39,6 +53,9 @@ struct AppState {
     agent_requests: Arc<Mutex<HashMap<String, Vec<i64>>>>,
     external_syncing: Arc<Mutex<HashSet<i64>>>,
 }
+=======
+struct AppState { db: Db, root: PathBuf, operator: String, contact: String, app_beian: String, icp_beian: String }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
 fn now() -> String { Utc::now().to_rfc3339() }
 fn db(state: &AppState) -> std::sync::MutexGuard<'_, Connection> { state.db.lock().expect("database mutex poisoned") }
@@ -173,6 +190,7 @@ async fn security_middleware(request: axum::extract::Request, next: Next) -> Res
 }
 
 async fn health(State(state): State<AppState>) -> Response { json_ok(StatusCode::OK, json!({"ok":true,"service":"fangcun","version":VERSION,"configured":configured(&state),"time":now()})) }
+<<<<<<< HEAD
 async fn link_health(State(state): State<AppState>, headers: HeaderMap) -> Response {
     json_ok(StatusCode::OK, json!({
         "ok": true, "schema": LINK_SCHEMA, "version": LINK_VERSION,
@@ -314,6 +332,8 @@ async fn link_snapshot(State(state): State<AppState>, headers: HeaderMap) -> Res
         "payload": link_snapshot_payload(&document, &timestamp)
     }))
 }
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 async fn api_v1_index() -> Response {
     json_ok(StatusCode::OK, json!({
         "ok": true,
@@ -321,7 +341,11 @@ async fn api_v1_index() -> Response {
         "service": "fangcun",
         "version": VERSION,
         "compatibility": "The unversioned /api routes remain supported for existing web clients.",
+<<<<<<< HEAD
         "resources": ["health", "auth", "data", "link/health", "link/snapshot", "calendar/subscription", "admin", "integrations", "agent"]
+=======
+        "resources": ["health", "auth", "data", "calendar/subscription", "admin", "integrations"]
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     }))
 }
 async fn auth_session(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -398,7 +422,11 @@ async fn calendar_ics(State(state): State<AppState>, Path(token): Path<String>) 
 fn provider(value: &str) -> Option<sync::Provider> { match value { "outlook" => Some(sync::Provider::Outlook), "google" => Some(sync::Provider::Google), _ => None } }
 async fn integration_status(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap) -> Response { let Some(p)=provider(&name) else{return json_error(StatusCode::NOT_FOUND,"不支持的同步服务")};let Some((user,_,_))=user_by_session(&state,&headers) else{return json_error(StatusCode::UNAUTHORIZED,"请先登录")};json_ok(StatusCode::OK,sync::status(&state.db,p,user)) }
 async fn integration_connect(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap, Json(body): Json<Value>) -> Response { let Some(p)=provider(&name) else{return json_error(StatusCode::NOT_FOUND,"不支持的同步服务")};let Some((user,_,_))=user_by_session(&state,&headers) else{return json_error(StatusCode::UNAUTHORIZED,"请先登录")};match sync::begin(&state.db,p,user,body["source"].as_str().unwrap_or("web")){Ok(v)=>json_ok(StatusCode::OK,json!({"ok":true,"authUrl":v["authUrl"]})),Err((code,msg))=>json_error(code,&msg)} }
+<<<<<<< HEAD
 async fn integration_sync(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap, Json(_body): Json<Value>) -> Response { let Some(p)=provider(&name) else{return json_error(StatusCode::NOT_FOUND,"不支持的同步服务")};let Some((user,_,_))=user_by_session(&state,&headers) else{return json_error(StatusCode::UNAUTHORIZED,"请先登录")};if !state.external_syncing.lock().expect("sync mutex poisoned").insert(user){return json_error(StatusCode::CONFLICT,"外部日历正在同步，请稍后再试")};let source=sync::document(&state.db,user).unwrap_or_else(||json!({}));let result=sync::sync_user(&state.db,p,user,source).await;state.external_syncing.lock().expect("sync mutex poisoned").remove(&user);match result{Ok(v)=>json_ok(StatusCode::OK,v),Err(msg)=>json_error(StatusCode::BAD_GATEWAY,&msg)} }
+=======
+async fn integration_sync(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap, Json(_body): Json<Value>) -> Response { let Some(p)=provider(&name) else{return json_error(StatusCode::NOT_FOUND,"不支持的同步服务")};let Some((user,_,_))=user_by_session(&state,&headers) else{return json_error(StatusCode::UNAUTHORIZED,"请先登录")};let source=sync::document(&state.db,user).unwrap_or_else(||json!({}));match sync::sync_user(&state.db,p,user,source).await{Ok(v)=>json_ok(StatusCode::OK,v),Err(msg)=>json_error(StatusCode::BAD_GATEWAY,&msg)} }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 async fn integration_disconnect(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap) -> Response { let Some(p)=provider(&name) else{return json_error(StatusCode::NOT_FOUND,"不支持的同步服务")};let Some((user,_,_))=user_by_session(&state,&headers) else{return json_error(StatusCode::UNAUTHORIZED,"请先登录")};sync::disconnect(&state.db,p,user);json_ok(StatusCode::OK,json!({"ok":true,"connected":false,"remoteCalendarRetained":true})) }
 async fn integration_callback(State(state): State<AppState>, Path(name): Path<String>, Query(query): Query<HashMap<String,String>>) -> Response { let Some(p)=provider(&name) else{return json_error(StatusCode::NOT_FOUND,"不支持的同步服务")};let code=query.get("code").cloned().unwrap_or_default();let oauth_state=query.get("state").cloned().unwrap_or_default();match sync::callback(&state.db,p,&code,&oauth_state).await{Ok((_,source))=>{let location=if source=="android"{format!("fangcun://{name}-connected")}else{format!("/?{name}=connected")};Response::builder().status(StatusCode::FOUND).header(header::LOCATION,location).header("cache-control","no-store").body(Body::empty()).unwrap()},Err(message)=>{let location=format!("/?{name}=error&message={}",urlencoding::encode(&message[..message.len().min(180)]));Response::builder().status(StatusCode::FOUND).header(header::LOCATION,location).header("cache-control","no-store").body(Body::empty()).unwrap()}} }
 async fn static_file(State(state): State<AppState>, uri: Uri) -> Response { let relative=if uri.path()=="/"{"index.html"}else{uri.path().trim_start_matches('/')};let allowed=["index.html","privacy.html","styles.css","v22-layout.css","smart-parser.js","docx-schedule-parser.js","app.js","manifest.webmanifest","icon.svg","service-worker.js","appearance.css","liquid.css","liquid-select.js","appearance.js","liquid-renderer.js","three.module.min.js","three.core.min.js"];if !allowed.contains(&relative){return json_error(StatusCode::NOT_FOUND,"Not found")};let path=state.root.join(relative);let Ok(bytes)=tokio::fs::read(path).await else{return json_error(StatusCode::NOT_FOUND,"Not found")};let content_type=match relative.rsplit('.').next().unwrap_or(""){ "html"=>"text/html; charset=utf-8","css"=>"text/css; charset=utf-8","js"=>"text/javascript; charset=utf-8","svg"=>"image/svg+xml","webmanifest"=>"application/manifest+json; charset=utf-8",_=>"application/octet-stream"};Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE,content_type).header("cache-control","no-cache, no-store, must-revalidate").body(Body::from(bytes)).unwrap() }
@@ -410,6 +438,7 @@ async fn main() {
     let data=PathBuf::from(env::var("DATA_DIR").unwrap_or_else(|_|root.join("data").to_string_lossy().into_owned()));
     std::fs::create_dir_all(&data).unwrap();
     let conn=Connection::open(data.join("fangcun.sqlite")).unwrap();
+<<<<<<< HEAD
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE COLLATE NOCASE,display_name TEXT NOT NULL,password_record TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'user',status TEXT NOT NULL DEFAULT 'active',created_at TEXT NOT NULL,last_login_at TEXT); CREATE TABLE IF NOT EXISTS user_sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_states(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS user_snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,revision INTEGER NOT NULL,document TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS calendar_tokens(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,created_at TEXT NOT NULL,last_access_at TEXT); CREATE TABLE IF NOT EXISTS agent_tokens(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,last_used_at INTEGER,UNIQUE(user_id,name)); CREATE TABLE IF NOT EXISTS agent_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,token_hash TEXT,user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,action TEXT NOT NULL,detail TEXT NOT NULL,created_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS user_snapshots_owner ON user_snapshots(user_id,id DESC); CREATE INDEX IF NOT EXISTS agent_audit_owner ON agent_audit(user_id,id DESC);").unwrap();
     migrate_legacy_owner(&conn); sync::init(&conn);
     let state=AppState{db:Arc::new(Mutex::new(conn)),root,operator:env::var("FANGCUN_OPERATOR_NAME").unwrap_or_default(),contact:env::var("FANGCUN_CONTACT").unwrap_or_default(),app_beian:env::var("FANGCUN_APP_BEIAN").unwrap_or_default(),icp_beian:env::var("FANGCUN_ICP_BEIAN").unwrap_or_default(),agent_requests:Arc::new(Mutex::new(HashMap::new())),external_syncing:Arc::new(Mutex::new(HashSet::new()))};
@@ -418,6 +447,15 @@ async fn main() {
         .route("/api/v1",get(api_v1_index))
         .route("/api/health",get(health)).route("/api/v1/health",get(health))
         .route("/api/v1/link/health", get(link_health)).route("/api/v1/link/snapshot", get(link_snapshot))
+=======
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE COLLATE NOCASE,display_name TEXT NOT NULL,password_record TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'user',status TEXT NOT NULL DEFAULT 'active',created_at TEXT NOT NULL,last_login_at TEXT); CREATE TABLE IF NOT EXISTS user_sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_states(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS user_snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,revision INTEGER NOT NULL,document TEXT NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS calendar_tokens(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,created_at TEXT NOT NULL,last_access_at TEXT); CREATE INDEX IF NOT EXISTS user_snapshots_owner ON user_snapshots(user_id,id DESC);").unwrap();
+    migrate_legacy_owner(&conn); sync::init(&conn);
+    let state=AppState{db:Arc::new(Mutex::new(conn)),root,operator:env::var("FANGCUN_OPERATOR_NAME").unwrap_or_default(),contact:env::var("FANGCUN_CONTACT").unwrap_or_default(),app_beian:env::var("FANGCUN_APP_BEIAN").unwrap_or_default(),icp_beian:env::var("FANGCUN_ICP_BEIAN").unwrap_or_default()};
+    let background=state.clone();tokio::spawn(async move{let mut interval=tokio::time::interval(std::time::Duration::from_secs(300));loop{interval.tick().await;for p in [sync::Provider::Outlook,sync::Provider::Google]{for user in sync::connected_users(&background.db,p){if let Some(source)=sync::document(&background.db,user){if let Err(error)=sync::sync_user(&background.db,p,user,source).await{sync::record_error(&background.db,p,user,&error);}}}}}});
+    let api=Router::new()
+        .route("/api/v1",get(api_v1_index))
+        .route("/api/health",get(health)).route("/api/v1/health",get(health))
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
         .route("/api/auth/session",get(auth_session)).route("/api/v1/auth/session",get(auth_session))
         .route("/api/auth/setup",post(setup)).route("/api/v1/auth/setup",post(setup))
         .route("/api/auth/register",post(register)).route("/api/v1/auth/register",post(register))
@@ -439,6 +477,7 @@ async fn main() {
         .route("/api/integrations/{provider}/connect",post(integration_connect)).route("/api/v1/integrations/{provider}/connect",post(integration_connect))
         .route("/api/integrations/{provider}/sync",post(integration_sync)).route("/api/v1/integrations/{provider}/sync",post(integration_sync))
         .route("/api/integrations/{provider}",delete(integration_disconnect)).route("/api/v1/integrations/{provider}",delete(integration_disconnect))
+<<<<<<< HEAD
         .merge(agent::routes())
         .fallback(static_file_rendered).layer(DefaultBodyLimit::max(2*1024*1024)).layer(middleware::from_fn(security_middleware)).with_state(state.clone());
     let host=env::var("HOST").unwrap_or_else(|_|"127.0.0.1".into());let port=env::var("PORT").ok().and_then(|p|p.parse().ok()).unwrap_or(4173);let addr:SocketAddr=format!("{host}:{port}").parse().unwrap();println!("方寸 Rust {VERSION} 已启动：http://{addr}");axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(),api.into_make_service()).await.unwrap();
@@ -482,3 +521,8 @@ mod link_snapshot_tests {
         assert_eq!(project["pendingActions"][0]["id"], "t1");
     }
 }
+=======
+        .fallback(static_file_rendered).layer(DefaultBodyLimit::max(2*1024*1024)).layer(middleware::from_fn(security_middleware)).with_state(state.clone());
+    let host=env::var("HOST").unwrap_or_else(|_|"127.0.0.1".into());let port=env::var("PORT").ok().and_then(|p|p.parse().ok()).unwrap_or(4173);let addr:SocketAddr=format!("{host}:{port}").parse().unwrap();println!("方寸 Rust {VERSION} 已启动：http://{addr}");axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(),api.into_make_service()).await.unwrap();
+}
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89

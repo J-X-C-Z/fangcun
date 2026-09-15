@@ -27,7 +27,10 @@ class WristbandCapabilities {
     this.note,
     this.features = const <String, bool>{},
     this.requiresPermissions = const <String>[],
+<<<<<<< HEAD
     this.raw = const <String, dynamic>{},
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   });
 
   factory WristbandCapabilities.fromJson(Map<String, dynamic> json) {
@@ -44,7 +47,10 @@ class WristbandCapabilities {
       requiresPermissions: (json['requiresPermissions'] as List? ?? const <Object>[])
           .whereType<String>()
           .toList(growable: false),
+<<<<<<< HEAD
       raw: json,
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     );
   }
 
@@ -55,6 +61,7 @@ class WristbandCapabilities {
   final String? note;
   final Map<String, bool> features;
   final List<String> requiresPermissions;
+<<<<<<< HEAD
   final Map<String, dynamic> raw;
 
   bool supports(String feature) => features[feature] == true;
@@ -62,6 +69,10 @@ class WristbandCapabilities {
   String? get lastError => raw['lastError'] as String?;
   int get nodeCount => (raw['nodeCount'] as num?)?.toInt() ?? 0;
   String? get serviceConnection => raw['serviceConnection'] as String?;
+=======
+
+  bool supports(String feature) => features[feature] == true;
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 }
 
 class WristbandResult {
@@ -89,6 +100,7 @@ class WristbandClient {
   Future<WristbandCapabilities> status() async => WristbandCapabilities.fromJson(await _call('getWristbandStatus'));
   Future<WristbandResult> connect([Map<String, dynamic> options = const {}]) async => WristbandResult.fromJson(await _call('connectWristband', options));
   Future<WristbandResult> disconnect() async => WristbandResult.fromJson(await _call('disconnectWristband'));
+<<<<<<< HEAD
   Future<WristbandResult> openApp([Map<String, dynamic> options = const {}]) async => WristbandResult.fromJson(await _call('openWristbandApp', options));
   Future<WristbandResult> sync(Map<String, dynamic> payload) async => WristbandResult.fromJson(await _call('syncWristband', payload));
   Future<List<Map<String, dynamic>>> pollEvents() async {
@@ -109,6 +121,9 @@ class WristbandClient {
       // Older builds have no event queue; there is nothing to acknowledge.
     }
   }
+=======
+  Future<WristbandResult> sync(Map<String, dynamic> payload) async => WristbandResult.fromJson(await _call('syncWristband', payload));
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
   Future<Map<String, dynamic>> _call(String method, [Object? arguments]) async {
     try {

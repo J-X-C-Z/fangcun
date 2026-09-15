@@ -43,8 +43,11 @@ windows
 
 手环 manifest package 与 Android applicationId 均为 `app.fangcun`，这样与社区验证的穿戴通信匹配规则一致。安装时需要把生成的 `.rpk` 安装到目标 Vela 手环，并让小米运动健康保持后台运行。
 
+<<<<<<< HEAD
 完整的已验证链路、签名要求和排障基线见仓库文档：[手机—手环互联方案](../../docs/PHONE-WRISTBAND-INTERCONNECT-SUMMARY.md)。
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 在 AIoT-IDE 中选择 `vela-watch-4.0` 镜像创建 `xiaomiBandpro` 模拟器，再运行或调试本项目。页面使用 `device-width` 作为设计宽度，三页均按 336 × 480 的单屏信息密度设计。
 
 ## 当前页面

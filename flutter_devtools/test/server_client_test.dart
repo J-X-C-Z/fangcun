@@ -31,6 +31,7 @@ void main() {
     expect(fake.requests[2].headers['Authorization'], 'Session secret');
   });
 
+<<<<<<< HEAD
   test('falls back to the deployed Web API when v1 login is not routed', () async {
     final fake = FakeTransport()
       ..responses.add(const ServerHttpResponse(401, '{"error":"请先登录"}'))
@@ -46,6 +47,8 @@ void main() {
     expect(fake.requests[2].uri.path, '/api/data');
   });
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   test('reads and writes revisioned data', () async {
     final fake = FakeTransport()
       ..responses.add(const ServerHttpResponse(200, '{"accessToken":"t","tokenType":"Session","expiresIn":10,"user":{}}'))
@@ -74,6 +77,7 @@ void main() {
     expect(client.isAuthenticated, isFalse);
     expect(fake.requests.last.headers.containsKey('Authorization'), isTrue);
   });
+<<<<<<< HEAD
 
   test('reads the native-independent link health and snapshot endpoints', () async {
     final fake = FakeTransport()
@@ -90,4 +94,6 @@ void main() {
     expect(snapshot.revision, 7);
     expect(fake.requests[1].uri.path, '/api/v1/link/snapshot');
   });
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 }

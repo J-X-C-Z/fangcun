@@ -1,6 +1,10 @@
 [package]
 name = "fangcun-server"
+<<<<<<< HEAD
 version = "2.8.0"
+=======
+version = "2.7.0"
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 edition = "2021"
 
 [dependencies]

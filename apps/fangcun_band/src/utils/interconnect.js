@@ -6,6 +6,7 @@ const ACK_TAG = "fangcun.link.ack"
 const MAX_CHUNK_SIZE = 1200
 const MAX_CHUNKS = 256
 
+<<<<<<< HEAD
 // The Vela simulator does not expose every device service. Keep the module
 // import-safe so a missing interconnect service cannot blank the whole app.
 function unavailableConnection() {
@@ -16,10 +17,13 @@ function unavailableConnection() {
   }
 }
 
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 function safeParse(value) {
   try { return typeof value === "string" ? JSON.parse(value) : value } catch (e) { return null }
 }
 
+<<<<<<< HEAD
 function callbackInfo(data, code) {
   const info = data && typeof data === "object" ? Object.assign({}, data) : { data }
   if (code != null && info.code == null) info.code = code
@@ -126,6 +130,19 @@ class FangcunInterconnect {
         }
       })
     })
+=======
+class FangcunInterconnect {
+  constructor() {
+    this.conn = interconnect.instance()
+    this.parts = Object.create(null)
+    this.snapshot = null
+    this.listeners = []
+    this.conn.onmessage = ({ data }) => this.receive(data)
+    this.conn.onopen = () => this.emit("open")
+    this.conn.onclose = () => this.emit("close")
+    this.conn.onerror = () => this.emit("error")
+    this.loadSnapshot()
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
   }
 
   emit(event, value) {
@@ -134,6 +151,7 @@ class FangcunInterconnect {
     })
   }
 
+<<<<<<< HEAD
   on(listener) {
     this.listeners.push(listener)
     return () => { this.listeners = this.listeners.filter(item => item !== listener) }
@@ -155,6 +173,13 @@ class FangcunInterconnect {
           reject(info)
         }
       })
+=======
+  on(listener) { this.listeners.push(listener); return this.listeners.length - 1 }
+
+  send(payload) {
+    return new Promise((resolve, reject) => {
+      this.conn.send({ data: payload, success: resolve, fail: reject })
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     })
   }
 
@@ -165,6 +190,7 @@ class FangcunInterconnect {
     try { await this.send(message) } catch (e) { console.error("fangcun link ack", e) }
   }
 
+<<<<<<< HEAD
   async sendAction(action) {
     const transferId = "action-" + Date.now() + "-" + Math.random().toString(36).slice(2)
     const payload = Object.assign({ schema: DATA_TAG, type: "action" }, action || {})
@@ -224,11 +250,21 @@ class FangcunInterconnect {
         if (message.kind === "action" && message.ok && message.transferId) await this.acknowledgeAction(message.transferId)
         this.emit("ack", message)
       }
+=======
+  async receive(raw) {
+    const message = safeParse(raw)
+    if (!message || !message.tag) return
+    if (message.tag !== DATA_TAG) {
+      if (message.tag === ACK_TAG) this.emit("ack", message)
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
       return
     }
     if (message.kind === "snapshot") {
       await this.commitSnapshot(message.payload || message.data, message.transferId || message.messageId)
+<<<<<<< HEAD
       this.flushPendingActions()
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
       return
     }
     if (message.kind !== "chunk" || typeof message.data !== "string") return
@@ -259,6 +295,7 @@ class FangcunInterconnect {
       await this.sendAck(transferId, false, "invalid_snapshot")
       return
     }
+<<<<<<< HEAD
     const incomingValue = snapshot.sync && snapshot.sync.revision
     const currentValue = this.snapshot && this.snapshot.sync && this.snapshot.sync.revision
     const incomingRevision = Number(incomingValue)
@@ -274,6 +311,16 @@ class FangcunInterconnect {
       return
     }
     this.snapshot = snapshot
+=======
+    const incomingRevision = Number(snapshot.sync && snapshot.sync.revision)
+    const currentRevision = Number(this.snapshot && this.snapshot.sync && this.snapshot.sync.revision)
+    if (Number.isFinite(incomingRevision) && Number.isFinite(currentRevision) && incomingRevision < currentRevision) {
+      await this.sendAck(transferId || snapshot.messageId, true, null, currentRevision)
+      return
+    }
+    this.snapshot = snapshot
+    try { await storage.set(JSON.stringify(snapshot)) } catch (e) { console.error("fangcun link storage", e) }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     this.emit("snapshot", snapshot)
     await this.sendAck(transferId || snapshot.messageId, true, null, snapshot.sync && snapshot.sync.revision)
   }
@@ -281,15 +328,23 @@ class FangcunInterconnect {
   async loadSnapshot() {
     try {
       const value = safeParse(await storage.get())
+<<<<<<< HEAD
       if (!this.snapshot && value && value.schema === DATA_TAG && value.type === "snapshot") {
         this.snapshot = value
         this.emit("snapshot", value)
       }
+=======
+      if (value) { this.snapshot = value; this.emit("snapshot", value) }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     } catch (e) { console.error("fangcun link load", e) }
   }
 
   getSnapshot() { return this.snapshot }
+<<<<<<< HEAD
   getState() { return this.state }
+=======
+  getState() { try { return this.conn.getApkStatus() } catch (e) { return "unknown" } }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 }
 
 export { DATA_TAG, ACK_TAG, MAX_CHUNK_SIZE }

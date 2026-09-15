@@ -1,6 +1,9 @@
 package app.fangcun.fangcun_devtools
 
+<<<<<<< HEAD
 import app.fangcun.XiaomiWristbandAdapter
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -13,8 +16,11 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import org.json.JSONObject
+<<<<<<< HEAD
 import org.json.JSONArray
 import java.util.concurrent.Executors
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -26,17 +32,26 @@ class MainActivity : FlutterActivity() {
     private val notificationChannel = "fangcun_devtools_island"
     private val snapshotPrefs = "fangcun_devtools_snapshot"
     private lateinit var notifications: NotificationManager
+<<<<<<< HEAD
     private lateinit var wristband: XiaomiWristbandAdapter
     private val wristbandExecutor = Executors.newSingleThreadExecutor()
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         notifications = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+<<<<<<< HEAD
         wristband = XiaomiWristbandAdapter(this)
         if (Build.VERSION.SDK_INT >= 26) {
             notifications.createNotificationChannel(NotificationChannel(notificationChannel, "方寸开发者事件", NotificationManager.IMPORTANCE_HIGH))
         }
         if (BackgroundSyncStore.token(this) != null) BackgroundSyncScheduler.schedule(this)
+=======
+        if (Build.VERSION.SDK_INT >= 26) {
+            notifications.createNotificationChannel(NotificationChannel(notificationChannel, "方寸开发者事件", NotificationManager.IMPORTANCE_HIGH))
+        }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -57,6 +72,13 @@ class MainActivity : FlutterActivity() {
                     result.success(mapOf("ok" to true, "event" to event, "native" to true, "haptic" to hapticFor(event), "island" to island, "capabilities" to capabilities()))
                 }
                 "getCapabilities" -> result.success(capabilities())
+<<<<<<< HEAD
+=======
+                "getWristbandCapabilities", "getWristbandStatus" -> result.success(wristbandCapabilities())
+                "connectWristband" -> result.success(wristbandUnavailable("connect"))
+                "disconnectWristband" -> result.success(wristbandUnavailable("disconnect"))
+                "syncWristband" -> result.success(wristbandUnavailable("sync"))
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
                 "getSnapshot" -> result.success(readSnapshot())
                 "haptic" -> {
                     playHaptic((call.arguments as? Map<*, *>)?.get("semantic") as? String ?: "light")
@@ -73,6 +95,7 @@ class MainActivity : FlutterActivity() {
                     result.success(mapOf("ok" to true))
                 }
                 "setDeveloperMode" -> result.success(mapOf("ok" to true, "native" to true))
+<<<<<<< HEAD
                 "configureBackgroundSync" -> {
                     val arguments = call.arguments as? Map<*, *>
                     val serverUrl = arguments?.get("serverUrl") as? String
@@ -122,12 +145,19 @@ class MainActivity : FlutterActivity() {
                     wristband.acknowledgeEvents(count)
                     result.success(mapOf("ok" to true))
                 }
+=======
+                "refreshWidget" -> result.success(mapOf("ok" to false, "native" to true, "state" to "unavailable", "note" to "Flutter host 当前未注册 Today Widget provider"))
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
                 else -> result.notImplemented()
             }
         }
     }
 
+<<<<<<< HEAD
     private fun capabilities(): Map<String, Any?> {
+=======
+    private fun capabilities(): Map<String, Any> {
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
         val manufacturer = Build.MANUFACTURER ?: "unknown"
         val xiaomi = manufacturer.lowercase().contains("xiaomi") || manufacturer.lowercase().contains("redmi")
         val notificationReady = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -149,6 +179,7 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+<<<<<<< HEAD
     private fun wristbandCapabilities(): Map<String, Any?> = jsonMap(wristband.capabilities())
 
     private fun jsonObject(arguments: Map<*, *>?): JSONObject {
@@ -176,6 +207,25 @@ class MainActivity : FlutterActivity() {
         is Array<*> -> value.map(::jsonValue)
         else -> value
     }
+=======
+    private fun wristbandCapabilities(): Map<String, Any> = mapOf(
+        "api" to "fangcun.wristband.v1",
+        "available" to false,
+        "state" to "unsupported",
+        "adapter" to "none",
+        "transport" to "bluetooth-le",
+        "note" to "尚未接入手环厂商 SDK；当前仅提供稳定连接协议",
+        "features" to mapOf("heartRate" to false, "steps" to false, "notifications" to false, "workout" to false),
+        "requiresPermissions" to listOf("android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"),
+    )
+
+    private fun wristbandUnavailable(operation: String): Map<String, Any> = mapOf(
+        "ok" to false,
+        "operation" to operation,
+        "state" to "unsupported",
+        "error" to "unsupported",
+    ) + wristbandCapabilities()
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
     private fun saveSnapshot(event: String, payload: Map<String, Any?>) {
         val text = payload.entries.joinToString(",") { "\"${it.key}\":\"${it.value.toString().replace("\"", "\\\"")}\"" }
@@ -255,9 +305,12 @@ class MainActivity : FlutterActivity() {
         event.endsWith(".remind") -> "confirm"
         else -> "light"
     }
+<<<<<<< HEAD
 
     override fun onDestroy() {
         wristbandExecutor.shutdownNow()
         super.onDestroy()
     }
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 }

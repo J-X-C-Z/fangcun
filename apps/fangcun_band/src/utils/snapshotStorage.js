@@ -1,7 +1,10 @@
 import file from "@system.file"
 
 const URI = "internal://files/fangcun_link_snapshot.json"
+<<<<<<< HEAD
 const ACTION_URI = "internal://files/fangcun_link_actions.json"
+=======
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
 
 function get() {
   return new Promise(resolve => file.readText({
@@ -20,6 +23,7 @@ function set(value) {
   }))
 }
 
+<<<<<<< HEAD
 function getActions() {
   return new Promise(resolve => file.readText({
     uri: ACTION_URI,
@@ -38,3 +42,6 @@ function setActions(value) {
 }
 
 export default { get, set, getActions, setActions }
+=======
+export default { get, set }
+>>>>>>> c64843a8c7ef9e0eac318215525082a9111c2b89
