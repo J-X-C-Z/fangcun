@@ -7,6 +7,11 @@ import 'dart:io';
 
 typedef JsonObject = Map<String, dynamic>;
 
+int _jsonInt(dynamic value) => value is num ? value.toInt() : 0;
+
+JsonObject _jsonObject(dynamic value) =>
+    value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+
 class ServerHttpResponse {
   const ServerHttpResponse(this.statusCode, this.body);
 
@@ -94,7 +99,11 @@ class SessionInfo {
 }
 
 class DataSnapshot {
-  const DataSnapshot({required this.data, required this.revision, this.updatedAt});
+  const DataSnapshot({
+    required this.data,
+    required this.revision,
+    this.updatedAt,
+  });
 
   final dynamic data;
   final int revision;
@@ -118,12 +127,12 @@ class LinkHealth {
   });
 
   factory LinkHealth.fromJson(JsonObject json) => LinkHealth(
-        schema: json['schema'] as String? ?? 'fangcun.link.v1',
-        version: json['version'] is num ? (json['version'] as num).toInt() : 0,
-        authenticated: json['authenticated'] == true,
-        transport: json['transport'] as String? ?? 'not-connected',
-        mode: json['mode'] as String? ?? 'pull-only',
-      );
+    schema: json['schema'] as String? ?? 'fangcun.link.v1',
+    version: json['version'] is num ? (json['version'] as num).toInt() : 0,
+    authenticated: json['authenticated'] == true,
+    transport: json['transport'] as String? ?? 'not-connected',
+    mode: json['mode'] as String? ?? 'pull-only',
+  );
 
   final String schema;
   final int version;
@@ -145,7 +154,8 @@ class LinkSnapshot {
     final schema = json['schema'];
     final version = json['version'];
     final dataState = json['dataState'];
-    if (schema != 'fangcun.link.v1' || version != 1 ||
+    if (schema != 'fangcun.link.v1' ||
+        version != 1 ||
         !const ['mock', 'live', 'stale', 'empty'].contains(dataState)) {
       throw const FormatException('手环快照协议版本不受支持');
     }
@@ -154,7 +164,7 @@ class LinkSnapshot {
       schema: schema as String,
       version: version as int,
       dataState: dataState as String,
-      revision: _int((json['sync'] as Map?)?['revision']),
+      revision: _jsonInt((json['sync'] as Map?)?['revision']),
     );
   }
 
@@ -164,15 +174,13 @@ class LinkSnapshot {
   final String dataState;
   final int revision;
 
-  JsonObject get payload => _object(raw['payload']);
+  JsonObject get payload => _jsonObject(raw['payload']);
 }
 
 class FangcunServerClient {
-  FangcunServerClient({
-    required Uri baseUrl,
-    ServerTransport? transport,
-  })  : _baseUrl = _normaliseBaseUrl(baseUrl),
-        _transport = transport ?? IoServerTransport();
+  FangcunServerClient({required Uri baseUrl, ServerTransport? transport})
+    : _baseUrl = _normaliseBaseUrl(baseUrl),
+      _transport = transport ?? IoServerTransport();
 
   final Uri _baseUrl;
   final ServerTransport _transport;
@@ -189,15 +197,19 @@ class FangcunServerClient {
   Future<JsonObject> health() => _send('GET', '/health', authenticated: false);
 
   Future<SessionInfo> login(String username, String password) async {
-    final result = await _send('POST', '/auth/login', authenticated: false, body: {
-      'username': username,
-      'password': password,
-      'client': 'flutter',
-    });
+    final result = await _send(
+      'POST',
+      '/auth/login',
+      authenticated: false,
+      body: {'username': username, 'password': password, 'client': 'flutter'},
+    );
     final token = result['accessToken'];
     final tokenType = result['tokenType'];
     final expiresIn = result['expiresIn'];
-    if (token is! String || token.isEmpty || tokenType != 'Session' || expiresIn is! num) {
+    if (token is! String ||
+        token.isEmpty ||
+        tokenType != 'Session' ||
+        expiresIn is! num) {
       throw const FormatException('登录响应缺少有效的 Session 令牌信息');
     }
     _accessToken = token;
@@ -221,10 +233,11 @@ class FangcunServerClient {
   }
 
   Future<DataWriteResult> putData(dynamic data, int baseRevision) async {
-    final result = await _send('PUT', '/data', body: {
-      'data': data,
-      'baseRevision': baseRevision,
-    });
+    final result = await _send(
+      'PUT',
+      '/data',
+      body: {'data': data, 'baseRevision': baseRevision},
+    );
     return DataWriteResult(
       revision: _int(result['revision']),
       updatedAt: result['updatedAt'] as String?,
@@ -232,12 +245,11 @@ class FangcunServerClient {
   }
 
   Future<LinkHealth> linkHealth() async => LinkHealth.fromJson(
-        await _send('GET', '/link/health', authenticated: false),
-      );
+    await _send('GET', '/link/health', authenticated: false),
+  );
 
-  Future<LinkSnapshot> getLinkSnapshot() async => LinkSnapshot.fromJson(
-        await _send('GET', '/link/snapshot'),
-      );
+  Future<LinkSnapshot> getLinkSnapshot() async =>
+      LinkSnapshot.fromJson(await _send('GET', '/link/snapshot'));
 
   Future<void> logout() async {
     try {
@@ -289,9 +301,8 @@ class FangcunServerClient {
     return decoded ?? (throw const FormatException('服务器响应不是 JSON 对象'));
   }
 
-  static JsonObject _object(dynamic value) => value is Map
-      ? Map<String, dynamic>.from(value)
-      : <String, dynamic>{};
+  static JsonObject _object(dynamic value) =>
+      value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
 
   static int _int(dynamic value) => value is num ? value.toInt() : 0;
 }
