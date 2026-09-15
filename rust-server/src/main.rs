@@ -12,7 +12,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use chrono::Utc;
+use chrono::{FixedOffset, NaiveDate, Utc};
 use fangcun_core::validate;
 use rand::{rngs::OsRng, TryRngCore};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -21,7 +21,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::{Arc, Mutex}};
 
-const VERSION: &str = "2.7.0";
+const VERSION: &str = "2.8.0";
+const LINK_SCHEMA: &str = "fangcun.link.v1";
+const LINK_VERSION: i64 = 1;
 const SESSION_AGE: i64 = 30 * 24 * 60 * 60;
 type Db = Arc<Mutex<Connection>>;
 
@@ -161,6 +163,147 @@ async fn security_middleware(request: axum::extract::Request, next: Next) -> Res
 }
 
 async fn health(State(state): State<AppState>) -> Response { json_ok(StatusCode::OK, json!({"ok":true,"service":"fangcun","version":VERSION,"configured":configured(&state),"time":now()})) }
+async fn link_health(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    json_ok(StatusCode::OK, json!({
+        "ok": true, "schema": LINK_SCHEMA, "version": LINK_VERSION,
+        "transport": "not-connected", "mode": "pull-only",
+        "snapshotRead": true, "snapshotWrite": false,
+        "authenticated": user_by_session(&state, &headers).is_some(), "time": now()
+    }))
+}
+
+fn link_text(value: &Value, key: &str, fallback: &str) -> String {
+    value.get(key).and_then(Value::as_str).unwrap_or(fallback).to_string()
+}
+
+fn link_bool(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn link_snapshot_projects(document: &Value, today: &str, at: &str) -> Value {
+    let projects = document.get("projects").and_then(Value::as_array).cloned().unwrap_or_default();
+    let tasks = document.get("tasks").and_then(Value::as_array).cloned().unwrap_or_default();
+    let today_date = NaiveDate::parse_from_str(today, "%Y-%m-%d").ok();
+    let mut pending_action_count = 0usize;
+    let items = projects.into_iter().map(|project| {
+        let project_id = link_text(&project, "id", "");
+        let milestones = project.get("milestones").and_then(Value::as_array).cloned().unwrap_or_default();
+        let project_tasks = tasks.iter().filter(|task| link_text(task, "projectId", "") == project_id).collect::<Vec<_>>();
+        let completed_milestones = milestones.iter().filter(|item| link_bool(item, "completed")).count();
+        let completed_actions = project_tasks.iter().filter(|task| link_bool(task, "completed")).count();
+        let total_units = milestones.len() + project_tasks.len();
+        let completed_units = completed_milestones + completed_actions;
+        let progress_percent = if total_units == 0 { 0 } else { ((completed_units * 100) / total_units) as i64 };
+        let recent_task = project_tasks.iter()
+            .filter(|task| link_bool(task, "completed"))
+            .max_by_key(|task| link_text(task, "updatedAt", ""))
+            .map(|task| link_text(task, "title", "已完成一项"));
+        let recent_milestone = milestones.iter()
+            .filter(|item| link_bool(item, "completed"))
+            .max_by_key(|item| link_text(item, "completedAt", ""))
+            .map(|item| link_text(item, "title", "已完成一项"));
+        let recent_completed = recent_task.or(recent_milestone).unwrap_or_default();
+
+        let mut pending = project_tasks.into_iter().filter(|task| !link_bool(task, "completed")).map(|task| json!({
+            "id": link_text(task, "id", ""), "title": link_text(task, "title", "未命名事项"),
+            "due": link_text(task, "due", ""), "dueTime": link_text(task, "dueTime", ""),
+            "important": link_bool(task, "important"), "urgent": link_bool(task, "urgent"),
+            "updatedAt": link_text(task, "updatedAt", at)
+        })).collect::<Vec<_>>();
+        pending.sort_by(|a, b| {
+            (!a["important"].as_bool().unwrap_or(false), a["due"].as_str().unwrap_or("9999-12-31"))
+                .cmp(&(!b["important"].as_bool().unwrap_or(false), b["due"].as_str().unwrap_or("9999-12-31")))
+        });
+        pending_action_count += pending.len();
+        let next_action_id = link_text(&project, "nextActionTaskId", "");
+        let next_action = pending.iter()
+            .find(|item| item["id"].as_str() == Some(next_action_id.as_str()))
+            .cloned()
+            .or_else(|| pending.first().cloned());
+
+        let due = link_text(&project, "due", "");
+        let start = link_text(&project, "startDate", "");
+        let time_percent = match (today_date, NaiveDate::parse_from_str(&start, "%Y-%m-%d").ok(), NaiveDate::parse_from_str(&due, "%Y-%m-%d").ok()) {
+            (Some(today), Some(start), Some(due)) if due > start => {
+                let elapsed = (today - start).num_days();
+                let total = (due - start).num_days();
+                ((elapsed * 100 / total).clamp(0, 100)) as i64
+            }
+            _ => 0
+        };
+        let status = if total_units > 0 && completed_units == total_units { "done" }
+            else if !due.is_empty() && due.as_str() < today { "overdue" }
+            else if time_percent > 20 && progress_percent + 15 < time_percent { "risk" }
+            else { "steady" };
+
+        let milestone_items = milestones.iter().take(4).map(|item| json!({
+            "id": link_text(item, "id", ""), "title": link_text(item, "title", "未命名里程碑"),
+            "due": link_text(item, "due", ""), "completed": link_bool(item, "completed")
+        })).collect::<Vec<_>>();
+        json!({
+            "id": project_id, "name": link_text(&project, "name", "未命名项目"),
+            "goal": link_text(&project, "goal", ""), "due": due,
+            "status": status, "progress": {
+                "percent": progress_percent, "completedUnits": completed_units,
+                "totalUnits": total_units, "timePercent": time_percent
+            },
+            "milestones": {
+                "completed": completed_milestones, "total": milestones.len(), "items": milestone_items
+            },
+            "recentCompleted": recent_completed,
+            "nextAction": next_action,
+            "pendingActions": pending.into_iter().take(5).collect::<Vec<_>>()
+        })
+    }).collect::<Vec<_>>();
+    json!({"count": items.len(), "pendingActionCount": pending_action_count, "items": items})
+}
+
+fn link_snapshot_payload(document: &Value, at: &str) -> Value {
+    let today = Utc::now().with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap()).date_naive().to_string();
+    let courses = document.get("courses").and_then(Value::as_array).cloned().unwrap_or_default();
+    let tasks = document.get("tasks").and_then(Value::as_array).cloned().unwrap_or_default();
+    let schedule = courses.iter().map(|course| json!({
+        "id": link_text(course, "id", ""), "kind": "course",
+        "title": link_text(course, "name", "未命名课程"), "location": link_text(course, "location", ""),
+        "day": course.get("day").and_then(Value::as_i64).unwrap_or(0),
+        "startSection": course.get("startSection").and_then(Value::as_i64).unwrap_or(0),
+        "endSection": course.get("endSection").and_then(Value::as_i64).unwrap_or(0),
+        "color": link_text(course, "color", "")
+    })).filter(|item| (1..=7).contains(&item["day"].as_i64().unwrap_or(0))).collect::<Vec<_>>();
+    let pending = tasks.iter().filter(|task| task.get("completed").and_then(Value::as_bool) != Some(true)).map(|task| json!({
+        "id": link_text(task, "id", ""), "title": link_text(task, "title", "未命名事项"),
+        "type": link_text(task, "type", "task"), "due": link_text(task, "due", ""),
+        "dueTime": link_text(task, "dueTime", ""), "notes": link_text(task, "notes", ""),
+        "completed": false, "important": task.get("important").and_then(Value::as_bool).unwrap_or(false),
+        "urgent": task.get("urgent").and_then(Value::as_bool).unwrap_or(false),
+        "projectId": link_text(task, "projectId", ""), "courseId": link_text(task, "courseId", ""),
+        "updatedAt": link_text(task, "updatedAt", at)
+    })).take(20).collect::<Vec<_>>();
+    json!({
+        "deviceStatus": {"state":"ready","battery":null,"charging":null,"firmware":null},
+        "schedule": {"date":today,"items":schedule},
+        "tasks": {"date":today,"pendingCount":pending.len(),"items":pending},
+        "projects": link_snapshot_projects(document, &today, at),
+        "syncState": {"mode":"pull-only","cursor":null,"canWrite":false,"transport":"not-connected"}
+    })
+}
+
+async fn link_snapshot(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some((user_id, username, _)) = user_by_session(&state, &headers) else { return json_error(StatusCode::UNAUTHORIZED, "请先登录") };
+    let row = db(&state).query_row("SELECT document,revision,updated_at FROM user_states WHERE user_id=?1", params![user_id], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?))).optional().ok().flatten();
+    let (document, revision, updated_at, data_state) = row.map(|(raw, rev, at)| (serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({})), rev, Some(at), "live")).unwrap_or_else(|| (json!({}), 0, None, "empty"));
+    let timestamp = now();
+    let display_name = db(&state).query_row("SELECT display_name FROM users WHERE id=?1", params![user_id], |r| r.get::<_, String>(0)).optional().ok().flatten().unwrap_or_else(|| username.clone());
+    json_ok(StatusCode::OK, json!({
+        "schema": LINK_SCHEMA, "version": LINK_VERSION, "type":"snapshot",
+        "messageId": format!("snapshot-{}", timestamp), "timestamp": timestamp,
+        "source":"server", "dataState": data_state,
+        "device": {"id":"fangcun-server","kind":"phone","name":"方寸手机端","platform":"rust"},
+        "account": {"id": user_id.to_string(), "displayName": display_name, "username": username},
+        "sync": {"revision":revision,"cursor":if revision > 0 {Some(revision.to_string())} else {None::<String>},"updatedAt":updated_at.clone(),"lastSyncAt":updated_at,"mode":"pull-only","canWrite":false},
+        "payload": link_snapshot_payload(&document, &timestamp)
+    }))
+}
 async fn api_v1_index() -> Response {
     json_ok(StatusCode::OK, json!({
         "ok": true,
@@ -168,7 +311,7 @@ async fn api_v1_index() -> Response {
         "service": "fangcun",
         "version": VERSION,
         "compatibility": "The unversioned /api routes remain supported for existing web clients.",
-        "resources": ["health", "auth", "data", "calendar/subscription", "admin", "integrations"]
+        "resources": ["health", "auth", "data", "link/health", "link/snapshot", "calendar/subscription", "admin", "integrations"]
     }))
 }
 async fn auth_session(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -264,6 +407,7 @@ async fn main() {
     let api=Router::new()
         .route("/api/v1",get(api_v1_index))
         .route("/api/health",get(health)).route("/api/v1/health",get(health))
+        .route("/api/v1/link/health", get(link_health)).route("/api/v1/link/snapshot", get(link_snapshot))
         .route("/api/auth/session",get(auth_session)).route("/api/v1/auth/session",get(auth_session))
         .route("/api/auth/setup",post(setup)).route("/api/v1/auth/setup",post(setup))
         .route("/api/auth/register",post(register)).route("/api/v1/auth/register",post(register))
@@ -287,4 +431,43 @@ async fn main() {
         .route("/api/integrations/{provider}",delete(integration_disconnect)).route("/api/v1/integrations/{provider}",delete(integration_disconnect))
         .fallback(static_file_rendered).layer(DefaultBodyLimit::max(2*1024*1024)).layer(middleware::from_fn(security_middleware)).with_state(state.clone());
     let host=env::var("HOST").unwrap_or_else(|_|"127.0.0.1".into());let port=env::var("PORT").ok().and_then(|p|p.parse().ok()).unwrap_or(4173);let addr:SocketAddr=format!("{host}:{port}").parse().unwrap();println!("方寸 Rust {VERSION} 已启动：http://{addr}");axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(),api.into_make_service()).await.unwrap();
+}
+
+#[cfg(test)]
+mod link_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn projects_payload_is_stable_for_empty_data() {
+        let payload = link_snapshot_payload(&json!({}), "2026-09-15T00:00:00Z");
+        assert_eq!(payload["projects"]["count"], 0);
+        assert_eq!(payload["projects"]["pendingActionCount"], 0);
+        assert_eq!(payload["projects"]["items"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn projects_payload_contains_progress_milestones_and_actions() {
+        let document = json!({
+            "projects": [{
+                "id": "p1", "name": "考试准备", "goal": "完成复习", "startDate": "2026-09-01", "due": "2026-09-30",
+                "milestones": [
+                    {"id": "m1", "title": "整理大纲", "due": "2026-09-10", "completed": true},
+                    {"id": "m2", "title": "完成一轮练习", "due": "2026-09-20", "completed": false}
+                ]
+            }],
+            "tasks": [
+                {"id": "t1", "title": "做错题", "projectId": "p1", "completed": false, "important": true, "due": "2026-09-18"},
+                {"id": "t2", "title": "已完成行动", "projectId": "p1", "completed": true}
+            ]
+        });
+        let projects = link_snapshot_payload(&document, "2026-09-15T00:00:00Z")["projects"].clone();
+        let project = &projects["items"][0];
+        assert_eq!(projects["count"], 1);
+        assert_eq!(projects["pendingActionCount"], 1);
+        assert_eq!(project["progress"]["percent"], 50);
+        assert_eq!(project["milestones"]["completed"], 1);
+        assert_eq!(project["milestones"]["total"], 2);
+        assert_eq!(project["pendingActions"].as_array().unwrap().len(), 1);
+        assert_eq!(project["pendingActions"][0]["id"], "t1");
+    }
 }

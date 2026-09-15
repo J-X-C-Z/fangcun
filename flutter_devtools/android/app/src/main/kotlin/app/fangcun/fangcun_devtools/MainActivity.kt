@@ -1,5 +1,6 @@
 package app.fangcun.fangcun_devtools
 
+import app.fangcun.XiaomiWristbandAdapter
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -12,6 +13,8 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import org.json.JSONObject
+import org.json.JSONArray
+import java.util.concurrent.Executors
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -23,10 +26,13 @@ class MainActivity : FlutterActivity() {
     private val notificationChannel = "fangcun_devtools_island"
     private val snapshotPrefs = "fangcun_devtools_snapshot"
     private lateinit var notifications: NotificationManager
+    private lateinit var wristband: XiaomiWristbandAdapter
+    private val wristbandExecutor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         notifications = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        wristband = XiaomiWristbandAdapter(this)
         if (Build.VERSION.SDK_INT >= 26) {
             notifications.createNotificationChannel(NotificationChannel(notificationChannel, "方寸开发者事件", NotificationManager.IMPORTANCE_HIGH))
         }
@@ -50,10 +56,6 @@ class MainActivity : FlutterActivity() {
                     result.success(mapOf("ok" to true, "event" to event, "native" to true, "haptic" to hapticFor(event), "island" to island, "capabilities" to capabilities()))
                 }
                 "getCapabilities" -> result.success(capabilities())
-                "getWristbandCapabilities", "getWristbandStatus" -> result.success(wristbandCapabilities())
-                "connectWristband" -> result.success(wristbandUnavailable("connect"))
-                "disconnectWristband" -> result.success(wristbandUnavailable("disconnect"))
-                "syncWristband" -> result.success(wristbandUnavailable("sync"))
                 "getSnapshot" -> result.success(readSnapshot())
                 "haptic" -> {
                     playHaptic((call.arguments as? Map<*, *>)?.get("semantic") as? String ?: "light")
@@ -71,12 +73,34 @@ class MainActivity : FlutterActivity() {
                 }
                 "setDeveloperMode" -> result.success(mapOf("ok" to true, "native" to true))
                 "refreshWidget" -> result.success(mapOf("ok" to false, "native" to true, "state" to "unavailable", "note" to "Flutter host 当前未注册 Today Widget provider"))
+                "getWristbandCapabilities" -> result.success(jsonMap(wristband.capabilities()))
+                "getWristbandStatus" -> result.success(jsonMap(wristband.status()))
+                "connectWristband", "disconnectWristband", "syncWristband" -> {
+                    val operation = when (call.method) {
+                        "connectWristband" -> "connect"
+                        "disconnectWristband" -> "disconnect"
+                        else -> "sync"
+                    }
+                    val arguments = call.arguments as? Map<*, *>
+                    wristbandExecutor.execute {
+                        val value = try {
+                            when (call.method) {
+                                "connectWristband" -> wristband.connect(jsonObject(arguments))
+                                "disconnectWristband" -> wristband.disconnect()
+                                else -> wristband.sync(jsonObject(arguments))
+                            }
+                        } catch (_: Exception) {
+                            JSONObject().put("ok", false).put("state", "error").put("error", "native_wristband_error")
+                        }
+                        result.success(jsonMap(value).plus("operation" to operation))
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
     }
 
-    private fun capabilities(): Map<String, Any> {
+    private fun capabilities(): Map<String, Any?> {
         val manufacturer = Build.MANUFACTURER ?: "unknown"
         val xiaomi = manufacturer.lowercase().contains("xiaomi") || manufacturer.lowercase().contains("redmi")
         val notificationReady = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -98,23 +122,30 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun wristbandCapabilities(): Map<String, Any> = mapOf(
-        "api" to "fangcun.wristband.v1",
-        "available" to false,
-        "state" to "unsupported",
-        "adapter" to "none",
-        "transport" to "bluetooth-le",
-        "note" to "尚未接入手环厂商 SDK；当前仅提供稳定连接协议",
-        "features" to mapOf("heartRate" to false, "steps" to false, "notifications" to false, "workout" to false),
-        "requiresPermissions" to listOf("android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"),
-    )
+    private fun wristbandCapabilities(): Map<String, Any?> = jsonMap(wristband.capabilities())
 
-    private fun wristbandUnavailable(operation: String): Map<String, Any> = mapOf(
-        "ok" to false,
-        "operation" to operation,
-        "state" to "unsupported",
-        "error" to "unsupported",
-    ) + wristbandCapabilities()
+    private fun jsonObject(arguments: Map<*, *>?): JSONObject {
+        val values = linkedMapOf<String, Any?>()
+        arguments?.forEach { (key, value) -> values[key.toString()] = value }
+        return JSONObject(values)
+    }
+
+    private fun jsonMap(value: JSONObject): Map<String, Any?> {
+        val output = linkedMapOf<String, Any?>()
+        val keys = value.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            output[key] = jsonValue(value.opt(key))
+        }
+        return output
+    }
+
+    private fun jsonValue(value: Any?): Any? = when (value) {
+        JSONObject.NULL -> null
+        is JSONObject -> jsonMap(value)
+        is JSONArray -> (0 until value.length()).map { jsonValue(value.opt(it)) }
+        else -> value
+    }
 
     private fun saveSnapshot(event: String, payload: Map<String, Any?>) {
         val text = payload.entries.joinToString(",") { "\"${it.key}\":\"${it.value.toString().replace("\"", "\\\"")}\"" }
@@ -193,5 +224,10 @@ class MainActivity : FlutterActivity() {
         event.endsWith(".pause") -> "snap"
         event.endsWith(".remind") -> "confirm"
         else -> "light"
+    }
+
+    override fun onDestroy() {
+        wristbandExecutor.shutdownNow()
+        super.onDestroy()
     }
 }

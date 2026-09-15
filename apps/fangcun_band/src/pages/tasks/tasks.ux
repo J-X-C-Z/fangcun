@@ -38,13 +38,26 @@ export default {
     ]
   },
   onShow() {
-    const tasks = snapshotTasks(link.getSnapshot(), 20)
+    this.updateSnapshot(link.getSnapshot())
+    this.stopLinkListener = link.on((event, snapshot) => {
+      if (event === "snapshot") this.updateSnapshot(snapshot)
+    })
+  },
+  onHide() {
+    if (this.stopLinkListener) this.stopLinkListener()
+    this.stopLinkListener = null
+  },
+  updateSnapshot(snapshot) {
+    const tasks = snapshotTasks(snapshot, 20)
     if (tasks.length) this.tasks = tasks
   },
   toggleTask(id) {
-    haptic.medium()
     this.tasks.forEach(task => {
-      if (task.id === id) task.completed = !task.completed
+      if (task.id === id) {
+        const wasCompleted = task.completed
+        task.completed = !task.completed
+        if (!wasCompleted && task.completed) haptic.complete()
+      }
     })
   },
   handleSwipe(e) {

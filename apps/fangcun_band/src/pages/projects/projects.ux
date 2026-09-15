@@ -4,22 +4,13 @@
       <div class="content column">
         <div class="top-bar row"><text class="back" onclick="goBack">‹</text><text class="page-title">长期项目</text><text class="clock">19:06</text></div>
 
-        <div class="project column">
-          <div class="project-head row"><div class="project-icon blue center"><div class="glyph project-glyph"><div class="project-back"></div><div class="project-front"></div></div></div><text class="project-title">蓝桥杯准备</text><text class="progress-value">62%</text></div>
-          <div class="progress-track"><div class="progress-fill progress-62"></div></div>
+        <div class="project column" for="{{project in projects}}">
+          <div class="project-head row"><div class="project-icon {{project.color}} center"><div class="glyph project-glyph"><div class="project-back"></div><div class="project-front"></div></div></div><text class="project-title">{{project.name}}</text><text class="progress-value">{{project.progress}}%</text></div>
+          <div class="progress-track"><div class="progress-fill" style="width: {{project.progressWidth}}px"></div></div>
           <text class="label">最近完成</text>
-          <text class="detail">完成基础算法练习 12 题</text>
+          <text class="detail">{{project.recent}}</text>
           <text class="label next-label">下一步</text>
-          <text class="detail">复习动态规划</text>
-        </div>
-
-        <div class="project column">
-          <div class="project-head row"><div class="project-icon teal center"><div class="glyph project-glyph"><div class="project-back"></div><div class="project-front"></div></div></div><text class="project-title">方寸开发</text><text class="progress-value">81%</text></div>
-          <div class="progress-track"><div class="progress-fill progress-81"></div></div>
-          <text class="label">最近完成</text>
-          <text class="detail">手环端静态界面</text>
-          <text class="label next-label">下一步</text>
-          <text class="detail">验证手机通信</text>
+          <text class="detail">{{project.next}}</text>
         </div>
         <text class="hint">项目编辑请在手机版完成 · 右滑返回</text>
       </div>
@@ -30,8 +21,30 @@
 <script>
 import router from "@system.router"
 import haptic from "../../common/haptic"
+import link from "../../utils/interconnect.js"
+import { snapshotProjects } from "../../utils/snapshot.js"
 export default {
-  private: { motionClass: "enter-right" },
+  private: {
+    motionClass: "enter-right",
+    projects: [
+      { id: "demo-1", name: "蓝桥杯准备", progress: 62, progressWidth: 165, recent: "完成基础算法练习 12 题", next: "复习动态规划", color: "blue" },
+      { id: "demo-2", name: "方寸开发", progress: 81, progressWidth: 215, recent: "手环端静态界面", next: "验证手机通信", color: "teal" }
+    ]
+  },
+  onShow() {
+    this.updateSnapshot(link.getSnapshot())
+    this.stopLinkListener = link.on((event, snapshot) => {
+      if (event === "snapshot") this.updateSnapshot(snapshot)
+    })
+  },
+  onHide() {
+    if (this.stopLinkListener) this.stopLinkListener()
+    this.stopLinkListener = null
+  },
+  updateSnapshot(snapshot) {
+    const projects = snapshotProjects(snapshot)
+    if (projects) this.projects = projects
+  },
   goBack() { haptic.light(); router.back() },
   handleSwipe(e) {
     if (e.direction === "right") {

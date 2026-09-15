@@ -31,6 +31,7 @@
 - `deviceStatus`：设备状态、剩余电量、充电状态和固件信息。当前设备未连接时，这些字段为 `null`。
 - `schedule`：`date` 为 `YYYY-MM-DD`，`items` 为课程/安排列表；每项至少包含 `id`、`kind`、`title`、`location`、`day`、`startSection`、`endSection`。
 - `tasks`：`date`、`pendingCount` 和最多 20 项未完成事项；每项包含稳定 `id`、标题、DDL、重要/紧急标记和关联对象 ID。
+- `projects`：`count`、`pendingActionCount` 和项目摘要；每项包含项目目标/期限/状态、按里程碑与关联任务计算的 `progress`、最多 4 个里程碑摘要，以及最多 5 个未完成关联行动。没有项目时仍返回 `{count:0,pendingActionCount:0,items:[]}`。
 - `syncState`：当前为 `mode: "pull-only"`、`canWrite: false`、`transport: "not-connected"`。
 
 ## 只读接口
@@ -44,7 +45,7 @@
 
 小米手环继续由 Mi Fitness 负责绑定和蓝牙连接。方寸 Android App 不直接抢占 BLE，而是使用社区已验证的小米穿戴通信库发现节点、申请设备权限并发送消息；手环端方寸 Vela 快应用通过 `system.interconnect` 接收消息。单包消息直接发送，较大的快照拆成 `fangcun.link.v1` 分片；手环完整落盘后回复 `fangcun.link.ack`，手机收到 ACK 才报告同步成功。
 
-方寸 Android App 的“手机互联”面板提供“同步到手环”和“发送测试通知”。消息内容均来自本协议；未安装快应用或连接失败时，通知仍可作为降级路径。
+手机登录并完成一次服务器同步后，会重新读取 `/api/v1/link/snapshot` 的最新标准化快照；若存在 Android 穿戴桥，则按 revision 去重并自动发送给手环。手环收到并确认 ACK 后，首页、任务页、日程页和长期项目页会刷新；未安装快应用或连接失败时，手机保留待重试状态，通知仍可作为降级路径。方寸 Android App 的“手机互联”面板也保留“同步到手环”和“发送测试通知”手动入口。
 
 ## 冲突与演进
 

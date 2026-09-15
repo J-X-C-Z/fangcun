@@ -104,7 +104,16 @@ export default {
   },
   onShow() {
     if (this.motionClass === "exit-left") this.motionClass = "enter-left"
-    const snapshot = link.getSnapshot()
+    this.updateSnapshot(link.getSnapshot())
+    this.stopLinkListener = link.on((event, snapshot) => {
+      if (event === "snapshot") this.updateSnapshot(snapshot)
+    })
+  },
+  onHide() {
+    if (this.stopLinkListener) this.stopLinkListener()
+    this.stopLinkListener = null
+  },
+  updateSnapshot(snapshot) {
     const tasks = snapshotTasks(snapshot, 3)
     const schedule = snapshotSchedule(snapshot)
     if (tasks.length) this.focusTasks = tasks
@@ -125,9 +134,12 @@ export default {
     }
   },
   toggleTask(id) {
-    haptic.medium()
     this.focusTasks.forEach(task => {
-      if (task.id === id) task.completed = !task.completed
+      if (task.id === id) {
+        const wasCompleted = task.completed
+        task.completed = !task.completed
+        if (!wasCompleted && task.completed) haptic.complete()
+      }
     })
   },
   routeDetail() { haptic.light(); router.push({ uri: "/pages/detail" }) },

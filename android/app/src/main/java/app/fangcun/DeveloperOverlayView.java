@@ -98,6 +98,16 @@ public final class DeveloperOverlayView extends FrameLayout {
         Button inspect = plainButton(context, "查看设备能力");
         inspect.setOnClickListener(view -> showCapabilities());
         content.addView(inspect, rowParams());
+        addSection(content, "小米手环连接");
+        Button checkWristband = plainButton(context, "检查连接并请求权限");
+        checkWristband.setOnClickListener(view -> runWristbandAction("连接检查", true));
+        content.addView(checkWristband, rowParams());
+        Button openWristband = plainButton(context, "打开手环端方寸");
+        openWristband.setOnClickListener(view -> runWristbandAction("打开手环 App", false));
+        content.addView(openWristband, rowParams());
+        Button readWristband = plainButton(context, "读取当前手环状态");
+        readWristband.setOnClickListener(view -> showWristbandStatus());
+        content.addView(readWristband, rowParams());
         eventLog = label(context, "尚未触发事件", 11, MUTED);
         eventLog.setPadding(dp(10), dp(10), dp(10), dp(10));
         eventLog.setBackground(round(PANEL, 12));
@@ -150,6 +160,52 @@ public final class DeveloperOverlayView extends FrameLayout {
         JSONObject capabilities = nativeModule.capabilities();
         status.setText(capabilities.optBoolean("hyperOsCandidate") ? "小米设备候选 · 超级岛接口待适配" : "普通 Android · 使用通知回退");
         eventLog.setText(capabilities.toString());
+    }
+
+    private void showWristbandStatus() {
+        JSONObject wristband = nativeModule.wristbandStatus();
+        status.setText(statusText(wristband));
+        eventLog.setText(wristband.toString());
+    }
+
+    private void runWristbandAction(String action, boolean requestPermission) {
+        status.setText(action + "中…");
+        new Thread(() -> {
+            JSONObject result = requestPermission
+                ? nativeModule.connectWristband(new JSONObject())
+                : nativeModule.openWristbandApp(new JSONObject());
+            postOnUi(() -> {
+                status.setText(statusText(result));
+                eventLog.setText(result.toString());
+            });
+        }, "fangcun-wristband-action").start();
+    }
+
+    private String statusText(JSONObject result) {
+        boolean connected = result.optBoolean("ok", false)
+            || ("connected".equals(result.optString("state"))
+                && result.optBoolean("listenersRegistered", false));
+        if (connected) {
+            return "手环已连接 · " + result.optString("operation", "状态正常");
+        }
+        if ("connecting".equals(result.optString("state"))) return "手环连接中…";
+        String error = wristbandErrorText(result.optString("error", "未连接"));
+        return "手环未连接 · " + error;
+    }
+
+    private String wristbandErrorText(String error) {
+        if ("no_connected_node".equals(error)) return "小米运动健康未暴露手环节点";
+        if ("wear_app_not_installed".equals(error)) return "请先用 AstroBox 安装手环端方寸";
+        if ("wear_app_check_unavailable".equals(error)
+            || "wear_app_check_failed".equals(error)) return "暂时无法确认 RPK，继续检查权限与消息通道";
+        if ("permission_required".equals(error)) return "等待授予手环通信权限";
+        if ("permission_denied".equals(error)) return "手环通信权限被拒绝";
+        if ("sdk_discovery_failed".equals(error)) return "小米穿戴 SDK 发现失败";
+        return error;
+    }
+
+    private void postOnUi(Runnable action) {
+        postDelayed(action, 0);
     }
 
     private void appendLog(String event) {

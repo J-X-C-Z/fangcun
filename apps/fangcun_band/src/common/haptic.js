@@ -1,9 +1,9 @@
 /**
  * Unified vibration feedback for Xiaomi Vela JS apps.
  *
- * The official vibrator API exposes short/long modes rather than intensity
- * levels, so the three semantic levels are mapped to the closest supported
- * mode. Unsupported runtimes fail silently.
+ * Navigation and ordinary taps are intentionally silent. Completion uses two
+ * short pulses: this is lighter and crisper than the previous long pulse on
+ * Vela hardware. Unsupported runtimes fail silently.
  */
 var vibrator = null
 
@@ -26,19 +26,25 @@ function vibrate(mode) {
 }
 
 export function light() {
-  vibrate('short')
+  // Ordinary navigation/taps should not vibrate.
 }
 
 export function medium() {
-  vibrate('short')
+  // Ordinary actions should not vibrate.
 }
 
 export function heavy() {
-  vibrate('long')
+  // Exit/navigation actions should not vibrate.
+}
+
+export function complete() {
+  vibrate('short')
+  setTimeout(() => vibrate('short'), 105)
 }
 
 export default {
   light,
   medium,
-  heavy
+  heavy,
+  complete
 }

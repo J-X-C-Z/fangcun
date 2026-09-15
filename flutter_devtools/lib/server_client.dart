@@ -108,6 +108,65 @@ class DataWriteResult {
   final String? updatedAt;
 }
 
+class LinkHealth {
+  const LinkHealth({
+    required this.schema,
+    required this.version,
+    required this.authenticated,
+    required this.transport,
+    required this.mode,
+  });
+
+  factory LinkHealth.fromJson(JsonObject json) => LinkHealth(
+        schema: json['schema'] as String? ?? 'fangcun.link.v1',
+        version: json['version'] is num ? (json['version'] as num).toInt() : 0,
+        authenticated: json['authenticated'] == true,
+        transport: json['transport'] as String? ?? 'not-connected',
+        mode: json['mode'] as String? ?? 'pull-only',
+      );
+
+  final String schema;
+  final int version;
+  final bool authenticated;
+  final String transport;
+  final String mode;
+}
+
+class LinkSnapshot {
+  const LinkSnapshot({
+    required this.raw,
+    required this.schema,
+    required this.version,
+    required this.dataState,
+    required this.revision,
+  });
+
+  factory LinkSnapshot.fromJson(JsonObject json) {
+    final schema = json['schema'];
+    final version = json['version'];
+    final dataState = json['dataState'];
+    if (schema != 'fangcun.link.v1' || version != 1 ||
+        !const ['mock', 'live', 'stale', 'empty'].contains(dataState)) {
+      throw const FormatException('手环快照协议版本不受支持');
+    }
+    return LinkSnapshot(
+      raw: json,
+      schema: schema as String,
+      version: version as int,
+      dataState: dataState as String,
+      revision: _int((json['sync'] as Map?)?['revision']),
+    );
+  }
+
+  final JsonObject raw;
+  final String schema;
+  final int version;
+  final String dataState;
+  final int revision;
+
+  JsonObject get payload => _object(raw['payload']);
+}
+
 class FangcunServerClient {
   FangcunServerClient({
     required Uri baseUrl,
@@ -171,6 +230,14 @@ class FangcunServerClient {
       updatedAt: result['updatedAt'] as String?,
     );
   }
+
+  Future<LinkHealth> linkHealth() async => LinkHealth.fromJson(
+        await _send('GET', '/link/health', authenticated: false),
+      );
+
+  Future<LinkSnapshot> getLinkSnapshot() async => LinkSnapshot.fromJson(
+        await _send('GET', '/link/snapshot'),
+      );
 
   Future<void> logout() async {
     try {

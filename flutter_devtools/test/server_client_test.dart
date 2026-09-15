@@ -59,4 +59,20 @@ void main() {
     expect(client.isAuthenticated, isFalse);
     expect(fake.requests.last.headers.containsKey('Authorization'), isTrue);
   });
+
+  test('reads the native-independent link health and snapshot endpoints', () async {
+    final fake = FakeTransport()
+      ..responses.add(const ServerHttpResponse(200, '{"ok":true,"schema":"fangcun.link.v1","version":1,"authenticated":false,"transport":"not-connected","mode":"pull-only"}'))
+      ..responses.add(const ServerHttpResponse(200, '{"schema":"fangcun.link.v1","version":1,"dataState":"live","sync":{"revision":7},"payload":{"tasks":{}}}'));
+    final client = FangcunServerClient(baseUrl: Uri.parse('https://example.test'), transport: fake);
+
+    final health = await client.linkHealth();
+    final snapshot = await client.getLinkSnapshot();
+
+    expect(health.schema, 'fangcun.link.v1');
+    expect(health.authenticated, isFalse);
+    expect(snapshot.dataState, 'live');
+    expect(snapshot.revision, 7);
+    expect(fake.requests[1].uri.path, '/api/v1/link/snapshot');
+  });
 }

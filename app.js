@@ -96,6 +96,7 @@ let waitingServiceWorker = null;
 let focusRotation = 0;
 let pendingScheduleImport = null;
 let currentLinkSnapshot = null;
+let automaticLinkSync = null;
 
 function accountKey(base) {
   return currentUser?.id ? `${base}:user-${currentUser.id}` : base;
@@ -372,6 +373,7 @@ let syncState = {
   registrationOpen: false,
   user: null,
   serverVersion: "",
+  linkSyncing: false,
 };
 
 function saveData() {
@@ -526,6 +528,7 @@ async function syncToCloud(force = false) {
     if (changedDuringUpload) scheduleCloudSync();
     setCloudIndicator(changedDuringUpload ? "syncing" : "online", changedDuringUpload ? "有新修改，继续同步…" : "已同步");
     renderCloudPanel();
+    await syncLatestLinkSnapshot({ document: data, revision: result.revision, updatedAt: result.updatedAt, source: "server" });
     return true;
   } catch (error) {
     if (currentUser?.id !== syncingAccount) return false;
@@ -554,7 +557,7 @@ async function fetchCloudState() {
   return apiRequest("/api/data");
 }
 
-function applyCloudData(remote) {
+async function applyCloudData(remote) {
   const migratedSchedule = isLegacyTimeSlots(remote.data?.timeSlots);
   const normalized = normalizeData(remote.data);
   if (!normalized) throw new Error("云端数据结构不正确");
@@ -573,6 +576,7 @@ function applyCloudData(remote) {
   setCloudIndicator("online", "已同步");
   renderCloudPanel();
   if (migratedSchedule) scheduleCloudSync();
+  await syncLatestLinkSnapshot({ document: data, revision: remote.revision, updatedAt: remote.updatedAt, source: "server" });
 }
 
 async function reconcileCloud() {
@@ -609,15 +613,16 @@ async function reconcileCloud() {
       else {
         setCloudIndicator("online", "已同步");
         renderCloudPanel();
+        await syncLatestLinkSnapshot({ document: data, revision: remote.revision, updatedAt: remote.updatedAt, source: "server" });
       }
       return;
     }
     if (meta.connectedBefore && !meta.dirty) {
-      applyCloudData(remote);
+      await applyCloudData(remote);
       return;
     }
     if (!meta.connectedBefore && isLikelyUntouchedSeed()) {
-      applyCloudData(remote);
+      await applyCloudData(remote);
       showToast("已载入你的云端数据");
       return;
     }
@@ -674,11 +679,12 @@ function renderLinkSnapshot(snapshot) {
   const payload = snapshot.payload || {};
   const tasks = payload.tasks?.items || [];
   const schedule = payload.schedule?.items || [];
+  const projects = payload.projects?.items || (Array.isArray(payload.projects) ? payload.projects : []);
   const stateLabels = { mock: "模拟数据", live: "已读取", stale: "数据较旧", empty: "暂无数据" };
   const state = snapshot.dataState || "empty";
   const pill = $("#linkStatePill");
   if (pill) { pill.textContent = stateLabels[state] || state; pill.dataset.state = state; }
-  $("#linkSummaryGrid").innerHTML = `<div class="link-summary-card"><strong>${tasks.length}</strong><span>待完成任务</span></div><div class="link-summary-card"><strong>${schedule.length}</strong><span>今日安排</span></div><div class="link-summary-card"><strong>${snapshot.sync?.revision || 0}</strong><span>数据版本</span></div>`;
+  $("#linkSummaryGrid").innerHTML = `<div class="link-summary-card"><strong>${tasks.length}</strong><span>待完成任务</span></div><div class="link-summary-card"><strong>${schedule.length}</strong><span>今日安排</span></div><div class="link-summary-card"><strong>${projects.length}</strong><span>长期项目</span></div><div class="link-summary-card"><strong>${snapshot.sync?.revision || 0}</strong><span>数据版本</span></div>`;
   $("#linkDeviceCard").innerHTML = `<div><span class="eyebrow">设备状态</span><strong>${escapeHTML(snapshot.device?.name || "方寸手机端")}</strong></div><span class="link-muted">${state === "mock" ? "本地模拟 · 未连接设备" : `只读快照 · ${snapshot.sync?.mode || "pull-only"}`}</span>`;
   $("#linkScheduleDate").textContent = payload.schedule?.date || "—";
   $("#linkTaskDate").textContent = payload.tasks?.date || "—";
@@ -692,13 +698,85 @@ function parseNativeResult(value) {
   try { return typeof value === "string" ? JSON.parse(value) : value; } catch { return null; }
 }
 
+function buildValidatedLinkSnapshot({ document = data, revision = syncState.revision, updatedAt = syncState.updatedAt, source = "server" } = {}) {
+  const contract = window.FangcunLinkContract;
+  if (!contract || typeof contract.buildSnapshot !== "function" || typeof contract.validateSnapshot !== "function") return null;
+  const snapshot = contract.buildSnapshot({ document, revision, updatedAt, dataState: "live", source, user: syncState.user });
+  if (!contract.validateSnapshot(snapshot)) throw new Error("手环快照契约校验失败");
+  return snapshot;
+}
+
+function nativeWristbandBridgeAvailable() {
+  return isNativeAndroid() && typeof window.FangcunNative?.connectWristband === "function" && typeof window.FangcunNative?.syncWristband === "function";
+}
+
+async function syncLatestLinkSnapshot(options = {}) {
+  if (!syncState.authenticated || !nativeWristbandBridgeAvailable()) return false;
+  let snapshot = options.snapshot || null;
+  try {
+    // The link endpoint is the source of truth. /api/data is the account
+    // document used by the web UI; this projection also carries the fields
+    // needed by the band (projects, progress, milestones and actions).
+    if (!snapshot) snapshot = await apiRequest("/api/v1/link/snapshot");
+    const contract = window.FangcunLinkContract;
+    if (!contract?.validateSnapshot?.(snapshot)) throw new Error("手环快照契约校验失败");
+    currentLinkSnapshot = snapshot;
+    renderLinkSnapshot(snapshot);
+  } catch (error) {
+    console.warn("手环自动同步跳过：无法读取最新服务端快照", error);
+    return false;
+  }
+  if (!snapshot) return false;
+  const revision = Number(snapshot.sync.revision);
+  if (!Number.isInteger(revision) || revision < 0) return false;
+  const meta = syncMeta();
+  if (Number(meta.lastWristbandRevision) === revision) return true;
+  if (automaticLinkSync) {
+    await automaticLinkSync;
+    return syncLatestLinkSnapshot(options);
+  }
+
+  const syncingAccount = currentUser?.id;
+  syncState.linkSyncing = true;
+  automaticLinkSync = (async () => {
+    try {
+      if (!syncState.authenticated || currentUser?.id !== syncingAccount) return false;
+      const connected = parseNativeResult(window.FangcunNative.connectWristband(JSON.stringify({}))) || {};
+      if (!connected.ok && connected.state !== "connected") {
+        console.info("手环自动同步跳过：未连接", connected);
+        return false;
+      }
+      const result = parseNativeResult(window.FangcunNative.syncWristband(JSON.stringify(snapshot))) || {};
+      if (!result.ok) {
+        console.warn("手环自动同步失败", result);
+        return false;
+      }
+      if (!syncState.authenticated || currentUser?.id !== syncingAccount) return false;
+      updateSyncMeta({ lastWristbandRevision: revision });
+      console.info("手环自动同步完成", { revision });
+      return true;
+    } catch (error) {
+      console.warn("手环自动同步异常", error);
+      return false;
+    } finally {
+      syncState.linkSyncing = false;
+      automaticLinkSync = null;
+    }
+  })();
+  return automaticLinkSync;
+}
+
 async function syncLinkToWristband() {
   const button = $("#syncLinkWristbandBtn");
   if (!isNativeAndroid() || typeof window.FangcunNative?.syncWristband !== "function") {
     return showToast("请在方寸 Android App 中使用手环同步");
   }
-  if (!currentLinkSnapshot) await loadLinkSnapshot();
+  // A mock preview can remain in memory after the user signs in. Always
+  // refresh the authenticated snapshot before a real wearable transfer.
+  if (syncState.authenticated || !currentLinkSnapshot) await loadLinkSnapshot();
   if (!currentLinkSnapshot) return showToast("没有可同步的数据");
+  const contract = window.FangcunLinkContract;
+  if (!contract?.validateSnapshot?.(currentLinkSnapshot)) return showToast("手环数据校验失败");
   if (button) { button.disabled = true; button.textContent = "连接中…"; }
   try {
     const connected = parseNativeResult(window.FangcunNative.connectWristband(JSON.stringify({}))) || {};
@@ -706,6 +784,7 @@ async function syncLinkToWristband() {
     if (button) button.textContent = "传输中…";
     const result = parseNativeResult(window.FangcunNative.syncWristband(JSON.stringify(currentLinkSnapshot))) || {};
     if (!result.ok) throw new Error(result.error || "传输失败");
+    updateSyncMeta({ lastWristbandRevision: Number(currentLinkSnapshot.sync?.revision || 0) });
     $("#linkSnapshotMeta").textContent = `已发送到手环 · 版本 ${currentLinkSnapshot.sync?.revision || 0}`;
     showToast("已同步到手环");
   } catch (error) {
@@ -724,6 +803,7 @@ async function loadLinkSnapshot() {
     let snapshot;
     if (syncState.authenticated) snapshot = await apiRequest("/api/v1/link/snapshot");
     else snapshot = window.FangcunLinkContract?.buildMockSnapshot();
+    if (!window.FangcunLinkContract?.validateSnapshot?.(snapshot)) throw new Error("手环快照契约校验失败");
     renderLinkSnapshot(snapshot);
   } catch (error) {
     renderLinkSnapshot(window.FangcunLinkContract?.buildMockSnapshot());
@@ -914,7 +994,7 @@ async function pullCloudData() {
     if (!syncState.authenticated || currentUser?.id !== pullingAccount) return;
     if (!remote.data) return showToast("云端还没有数据");
     if (JSON.stringify(data) !== localBeforePull) return showToast("下载期间本机有新修改，未覆盖，请重新确认版本");
-    applyCloudData(remote);
+    await applyCloudData(remote);
     showToast("已下载云端数据");
   } catch (error) {
     showToast(error.message);
@@ -3591,7 +3671,7 @@ async function runIntegrationAction(provider, action) {
         integrationFeedback(provider, ui.name + " 已处理请求，但期间本机有新修改，未覆盖本机；请到“方寸账号”页确认版本。", true);
         renderCloudPanel();
       } else {
-        if (remote.data) applyCloudData(remote);
+        if (remote.data) await applyCloudData(remote);
         integrationFeedback(provider, "同步完成 · 上传 " + (result.stats?.pushed || 0) + " · 拉取 " + (result.stats?.pulled || 0) + " · 导入 " + (result.stats?.imported || 0) + " · " + new Date().toLocaleTimeString("zh-CN"));
       }
     }

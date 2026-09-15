@@ -7,6 +7,8 @@ Rust 服务从 `/api/v1` 提供版本化入口。现有网页客户端仍使用 
 已迁移到 Rust 的 v1 资源包括。网页使用 HttpOnly Cookie；Flutter 使用登录响应中的 Session 令牌，两者最终映射到同一套服务端会话表：
 
 - `GET /api/v1/health`
+- `GET /api/v1/link/health`
+- `GET /api/v1/link/snapshot`
 - `GET /api/v1/auth/session`
 - `POST /api/v1/auth/setup`
 - `POST /api/v1/auth/register`

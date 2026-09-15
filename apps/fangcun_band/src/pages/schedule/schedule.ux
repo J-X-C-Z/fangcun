@@ -41,7 +41,17 @@ export default {
     ]
   },
   onShow() {
-    const schedule = snapshotSchedule(link.getSnapshot())
+    this.updateSnapshot(link.getSnapshot())
+    this.stopLinkListener = link.on((event, snapshot) => {
+      if (event === "snapshot") this.updateSnapshot(snapshot)
+    })
+  },
+  onHide() {
+    if (this.stopLinkListener) this.stopLinkListener()
+    this.stopLinkListener = null
+  },
+  updateSnapshot(snapshot) {
+    const schedule = snapshotSchedule(snapshot)
     if (schedule.length) this.schedule = schedule
   },
   handleSwipe(e) {

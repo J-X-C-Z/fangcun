@@ -22,7 +22,7 @@ Today Widget 只读取 `NativeSnapshotStore`，不访问 WebView 或网络。前
 
 ## 手环预备接口
 
-手机侧预留统一协议 `fangcun.wristband.v1`，当前实现明确返回 `state: unsupported`，不申请蓝牙权限，也不伪装已连接。生产 WebView 的 `FangcunNative` 与 Flutter 的 `MethodChannel("app.fangcun/hyperos")` 共用这些方法：
+手机侧使用统一协议 `fangcun.wristband.v1`。WebView 生产壳和 Flutter Android 宿主都调用同一份 Xiaomi AAR adapter；当系统没有 Mi Fitness/可用节点、权限未授予或 RPK 未安装时，仍返回明确的 `state`/`error`，不伪装已连接。生产 WebView 的 `FangcunNative` 与 Flutter 的 `MethodChannel("app.fangcun/hyperos")` 共用这些方法：
 
 | 方法 | 输入 | 返回重点 |
 | --- | --- | --- |

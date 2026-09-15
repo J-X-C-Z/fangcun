@@ -27,6 +27,10 @@ Authorization: Session <accessToken>
 2. `GET /api/v1/auth/session` 检查令牌是否仍有效。
 3. `GET /api/v1/data` 读取当前数据；响应包含 `data`、`revision`、`updatedAt`。
 4. 本地变更时使用 `PUT /api/v1/data`，提交完整文档和读取到的 `revision`。
+5. 需要同步到手环时使用 `GET /api/v1/link/snapshot`，Flutter 将完整信封交给原生 `syncWristband` MethodChannel；这个步骤不经过 WebView，也不让手环访问服务器。
+
+Flutter 的最小调用链是 `FangcunServerClient.getLinkSnapshot()` → `WristbandClient.sync(snapshot.raw)`。
+服务端只负责鉴权和生成标准化快照，具体手环 SDK 由 Android 原生 adapter 负责；没有 adapter 时必须返回 `state: unsupported`，不能把服务器拉取成功误报为手环同步成功。
 
 ## 同步约定
 

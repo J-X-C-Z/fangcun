@@ -14,6 +14,9 @@ import com.xiaomi.xms.wearable.node.Node;
 import com.xiaomi.xms.wearable.node.NodeApi;
 import com.xiaomi.xms.wearable.node.OnDataChangedListener;
 import com.xiaomi.xms.wearable.node.DataSubscribeResult;
+import com.xiaomi.xms.wearable.service.OnServiceConnectionListener;
+import com.xiaomi.xms.wearable.service.ServiceApi;
+import com.xiaomi.xms.wearable.tasks.Task;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
@@ -40,11 +43,16 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
     private final NodeApi nodeApi;
     private final AuthApi authApi;
     private final MessageApi messageApi;
+    private final ServiceApi serviceApi;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final Object transferLock = new Object();
     private final OnMessageReceivedListener messageListener = this::onMessage;
     private final OnDataChangedListener connectionListener = this::onConnectionChanged;
+    private final OnServiceConnectionListener serviceListener = new OnServiceConnectionListener() {
+        @Override public void onServiceConnected() { serviceConnectionStatus = "connected"; }
+        @Override public void onServiceDisconnected() { serviceConnectionStatus = "disconnected"; }
+    };
 
     private volatile Node activeNode;
     private volatile String state = STATE_DISCONNECTED;
@@ -53,6 +61,11 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
     private volatile boolean listenersRegistered;
     private volatile boolean heartbeatRunning;
     private volatile boolean handshakeComplete;
+    private volatile String lastError;
+    private volatile int lastNodeCount;
+    private volatile Boolean lastWearAppInstalled;
+    private volatile Boolean lastPermissionsGranted;
+    private volatile String serviceConnectionStatus = "unknown";
     private int reconnectAttempt;
 
     public XiaomiWristbandAdapter(Context context) {
@@ -60,6 +73,8 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
         nodeApi = Wearable.getNodeApi(appContext);
         authApi = Wearable.getAuthApi(appContext);
         messageApi = Wearable.getMessageApi(appContext);
+        serviceApi = Wearable.getServiceApi(appContext);
+        serviceApi.registerServiceConnectionListener(serviceListener);
     }
 
     @Override
@@ -94,7 +109,12 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
             result.put("nodeId", node == null ? JSONObject.NULL : node.id)
                 .put("nodeName", node == null ? JSONObject.NULL : node.name)
                 .put("listenersRegistered", listenersRegistered)
-                .put("lastRevision", lastRevision == null ? JSONObject.NULL : lastRevision);
+                .put("lastRevision", lastRevision == null ? JSONObject.NULL : lastRevision)
+                .put("lastError", lastError == null ? JSONObject.NULL : lastError)
+                .put("nodeCount", lastNodeCount)
+                .put("wearAppInstalled", lastWearAppInstalled == null ? JSONObject.NULL : lastWearAppInstalled)
+                .put("permissionsGranted", lastPermissionsGranted == null ? JSONObject.NULL : lastPermissionsGranted);
+            result.put("serviceConnection", serviceConnectionStatus);
         } catch (Exception ignored) {}
         return result;
     }
@@ -129,13 +149,16 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
             node = activeNode;
         }
         if (node == null) return operationResult("openApp", false, "not_connected");
+        // launchWearApp's second argument is the RPK package name, not a
+        // Vela page route. The AAR/API contract uses this to select the app.
         String packageName = options == null ? DEFAULT_WEAR_PACKAGE : options.optString("package", DEFAULT_WEAR_PACKAGE);
+        if (packageName.isEmpty()) packageName = DEFAULT_WEAR_PACKAGE;
         try {
-            nodeApi.launchWearApp(node.id, packageName)
-                .addOnSuccessListener(ignored -> {})
-                .addOnFailureListener(ignored -> {});
-            return operationResult("openApp", true);
+            boolean launched = awaitTask(nodeApi.launchWearApp(node.id, packageName), CONNECT_TIMEOUT_MS);
+            lastError = launched ? null : "launch_failed";
+            return operationResult("openApp", launched, launched ? null : "launch_failed");
         } catch (Exception error) {
+            lastError = "launch_failed";
             return operationResult("openApp", false, "launch_failed");
         }
     }
@@ -182,23 +205,77 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
 
     private void discoverAndPrepare(boolean requestPermission, CountDownLatch done) {
         state = STATE_CONNECTING;
+        lastError = null;
+        lastNodeCount = 0;
+        lastWearAppInstalled = null;
+        lastPermissionsGranted = null;
         nodeApi.getConnectedNodes()
-            .addOnSuccessListener(nodes -> chooseNode(nodes, requestPermission, done))
-            .addOnFailureListener(error -> finishDiscovery(done));
+            .addOnSuccessListener(nodes -> {
+                lastNodeCount = nodes == null ? 0 : nodes.size();
+                chooseNode(nodes, requestPermission, done);
+            })
+            .addOnFailureListener(error -> {
+                state = STATE_ERROR;
+                lastError = "sdk_discovery_failed";
+                finishDiscovery(done);
+            });
     }
 
     private void chooseNode(List<Node> nodes, boolean requestPermission, CountDownLatch done) {
         Node node = nodes == null || nodes.isEmpty() ? null : nodes.get(0);
-        if (node == null) { activeNode = null; state = STATE_DISCONNECTED; finishDiscovery(done); return; }
+        if (node == null) {
+            Node previous = activeNode;
+            if (previous != null) unregister(previous);
+            activeNode = null;
+            handshakeComplete = false;
+            state = STATE_DISCONNECTED;
+            lastError = "connected".equals(serviceConnectionStatus) ? "service_connected_no_node"
+                : "disconnected".equals(serviceConnectionStatus) ? "wearable_service_disconnected"
+                : "no_connected_node";
+            finishDiscovery(done);
+            return;
+        }
         Node previous = activeNode;
         if (previous != null && !previous.id.equals(node.id)) unregister(previous);
         activeNode = node;
         nodeApi.isWearAppInstalled(node.id)
             .addOnSuccessListener(installed -> {
-                if (!installed) { state = STATE_ERROR; finishDiscovery(done); return; }
+                lastWearAppInstalled = installed;
+                if (!installed) {
+                    state = STATE_ERROR;
+                    lastError = "wear_app_not_installed";
+                    finishDiscovery(done);
+                    return;
+                }
                 checkPermissions(node, requestPermission, done);
             })
-            .addOnFailureListener(error -> { state = STATE_ERROR; finishDiscovery(done); });
+            .addOnFailureListener(error -> {
+                // The AAR exposes this as a Task<Boolean>, but a failed Task is
+                // not equivalent to Boolean.FALSE.  In particular, Band 10 Pro
+                // can have a connected node while this optional query is not
+                // supported by the companion service.  Only the SDK's explicit
+                // AppNotInstalledException is evidence that the app is absent;
+                // otherwise keep the value unknown and continue with the
+                // permission/message setup, which is the actual connection path.
+                if (isAppNotInstalledFailure(error)) {
+                    lastWearAppInstalled = false;
+                    state = STATE_ERROR;
+                    lastError = "wear_app_not_installed";
+                    finishDiscovery(done);
+                } else {
+                    lastWearAppInstalled = null;
+                    lastError = "wear_app_check_unavailable";
+                    checkPermissions(node, requestPermission, done);
+                }
+            });
+    }
+
+    private static boolean isAppNotInstalledFailure(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if ("com.xiaomi.xms.wearable.exception.AppNotInstalledException"
+                .equals(current.getClass().getName())) return true;
+        }
+        return false;
     }
 
     private void checkPermissions(Node node, boolean requestPermission, CountDownLatch done) {
@@ -207,14 +284,43 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
             .addOnSuccessListener(granted -> {
                 boolean allGranted = granted != null && granted.length == required.length;
                 if (allGranted) for (boolean value : granted) allGranted &= value;
+                lastPermissionsGranted = allGranted;
                 if (allGranted) register(node, done);
                 else if (requestPermission) {
                     authApi.requestPermission(node.id, required)
-                        .addOnSuccessListener(ignored -> register(node, done))
-                        .addOnFailureListener(error -> { state = STATE_ERROR; finishDiscovery(done); });
-                } else { state = STATE_DISCONNECTED; finishDiscovery(done); }
+                        .addOnSuccessListener(permissions -> {
+                            boolean approved = permissions != null;
+                            for (Permission permission : required) {
+                                boolean found = false;
+                                if (permissions != null) for (Permission grantedPermission : permissions) {
+                                    if (permission == grantedPermission) { found = true; break; }
+                                }
+                                approved &= found;
+                            }
+                            lastPermissionsGranted = approved;
+                            if (approved) register(node, done);
+                            else {
+                                state = STATE_ERROR;
+                                lastError = "permission_denied";
+                                finishDiscovery(done);
+                            }
+                        })
+                        .addOnFailureListener(error -> {
+                            state = STATE_ERROR;
+                            lastError = "permission_denied";
+                            finishDiscovery(done);
+                        });
+                } else {
+                    state = STATE_DISCONNECTED;
+                    lastError = "permission_required";
+                    finishDiscovery(done);
+                }
             })
-            .addOnFailureListener(error -> { state = STATE_ERROR; finishDiscovery(done); });
+            .addOnFailureListener(error -> {
+                state = STATE_ERROR;
+                lastError = "permission_check_failed";
+                finishDiscovery(done);
+            });
     }
 
     private void register(Node node, CountDownLatch done) {
@@ -224,14 +330,23 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
                 .addOnSuccessListener(ignored2 -> {
                     listenersRegistered = true;
                         state = STATE_CONNECTED;
+                        lastError = null;
                         reconnectAttempt = 0;
                         handshakeComplete = false;
                         startHeartbeat();
                         startHandshake(node);
                         finishDiscovery(done);
                 })
-                .addOnFailureListener(error -> { state = STATE_ERROR; finishDiscovery(done); }))
-            .addOnFailureListener(error -> { state = STATE_ERROR; finishDiscovery(done); });
+                .addOnFailureListener(error -> {
+                    state = STATE_ERROR;
+                    lastError = "connection_subscription_failed";
+                    finishDiscovery(done);
+                }))
+            .addOnFailureListener(error -> {
+                state = STATE_ERROR;
+                lastError = "message_listener_failed";
+                finishDiscovery(done);
+            });
     }
 
     private void startHeartbeat() {
@@ -306,36 +421,63 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
 
     private boolean sendFrames(String nodeId, byte[][] frames) {
         try {
-            for (byte[] frame : frames) messageApi.sendMessage(nodeId, frame);
+            for (byte[] frame : frames) {
+                // sendMessage callbacks are delivered asynchronously. This
+                // method can be reached through the synchronous WebView
+                // JavascriptInterface on Android's main thread; waiting for
+                // the SDK Task there makes every non-immediate send look like
+                // a failure. The transfer-level ACK below is the reliable
+                // completion signal, so only enforce the frame size here.
+                if (frame.length > MAX_FRAME_BYTES) {
+                    lastError = "message_send_failed";
+                    return false;
+                }
+                messageApi.sendMessage(nodeId, frame);
+            }
+            lastError = null;
             return true;
         } catch (Exception error) {
+            lastError = "message_send_failed";
             return false;
         }
     }
 
+    private static boolean awaitTask(Task<?> task, long timeoutMs) {
+        if (task == null) return false;
+        if (task.isComplete()) return task.isSuccessful();
+        // SDK callbacks may run on the main thread; never block that thread waiting for one.
+        if (Looper.myLooper() == Looper.getMainLooper()) return false;
+        CountDownLatch completed = new CountDownLatch(1);
+        task.addOnSuccessListener(ignored -> completed.countDown())
+            .addOnFailureListener(error -> completed.countDown());
+        await(completed, timeoutMs);
+        return completed.getCount() == 0 && task.isSuccessful();
+    }
+
     private static byte[][] buildFrames(String data, String transferId) {
-        byte[] bytes = data.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= MAX_FRAME_BYTES) return new byte[][]{envelope("snapshot", transferId, 0, 1, data)};
+        byte[] snapshot = envelope("snapshot", transferId, 0, 1, data);
+        if (snapshot.length <= MAX_FRAME_BYTES) return new byte[][]{snapshot};
         java.util.ArrayList<String> pieces = new java.util.ArrayList<>();
         StringBuilder current = new StringBuilder();
-        int currentBytes = 0;
         for (int offset = 0; offset < data.length();) {
             int codePoint = data.codePointAt(offset);
             String part = new String(Character.toChars(codePoint));
-            int partBytes = part.getBytes(StandardCharsets.UTF_8).length;
-            if (current.length() > 0 && currentBytes + partBytes > MAX_FRAME_BYTES) {
+            current.append(part);
+            // Reserve the maximum possible index/total widths while measuring JSON escaping.
+            if (envelope("chunk", transferId, Integer.MAX_VALUE, Integer.MAX_VALUE, current.toString()).length > MAX_FRAME_BYTES) {
+                current.setLength(current.length() - part.length());
+                if (current.length() == 0) throw new IllegalArgumentException("code point exceeds frame limit");
                 pieces.add(current.toString());
                 current.setLength(0);
-                currentBytes = 0;
+                current.append(part);
             }
-            current.append(part);
-            currentBytes += partBytes;
             offset += Character.charCount(codePoint);
         }
         if (current.length() > 0) pieces.add(current.toString());
         byte[][] frames = new byte[pieces.size()][];
         for (int index = 0; index < pieces.size(); index++) {
             frames[index] = envelope("chunk", transferId, index, pieces.size(), pieces.get(index));
+            if (frames[index].length > MAX_FRAME_BYTES) throw new IllegalArgumentException("frame exceeds limit");
         }
         return frames;
     }
@@ -377,7 +519,12 @@ public final class XiaomiWristbandAdapter implements WristbandAdapter {
         JSONObject result = base();
         try {
             result.put("ok", ok).put("operation", operation).put("state", state);
-            if (error != null) result.put("error", error);
+            String resolvedError = error == null ? null : (lastError == null ? error : lastError);
+            if (resolvedError != null) result.put("error", resolvedError);
+            result.put("nodeCount", lastNodeCount)
+                .put("wearAppInstalled", lastWearAppInstalled == null ? JSONObject.NULL : lastWearAppInstalled)
+                .put("permissionsGranted", lastPermissionsGranted == null ? JSONObject.NULL : lastPermissionsGranted)
+                .put("serviceConnection", serviceConnectionStatus);
         } catch (Exception ignored) {}
         return result;
     }

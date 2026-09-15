@@ -43,10 +43,34 @@
     };
   }
 
+  function normalizeProject(project, tasks) {
+    const milestones = list(project.milestones).map((item) => ({
+      id: text(item.id), title: text(item.title, "未命名里程碑"), due: text(item.due), completed: item.completed === true,
+    }));
+    const actions = tasks.filter((task) => task.projectId === text(project.id));
+    const totalUnits = milestones.length + actions.length;
+    const completedUnits = milestones.filter((item) => item.completed).length + actions.filter((item) => item.completed).length;
+    const explicitProgress = Number(project.progress?.percent ?? project.progress);
+    const percent = Number.isFinite(explicitProgress)
+      ? Math.max(0, Math.min(100, Math.round(explicitProgress > 1 ? explicitProgress : explicitProgress * 100)))
+      : (totalUnits ? Math.round(completedUnits * 100 / totalUnits) : 0);
+    const pendingActions = actions.filter((task) => !task.completed).sort((a, b) => `${a.due} ${a.dueTime}`.localeCompare(`${b.due} ${b.dueTime}`));
+    const nextAction = project.nextActionTaskId ? pendingActions.find((task) => task.id === project.nextActionTaskId) : null;
+    return {
+      id: text(project.id), name: text(project.name, "未命名项目"), goal: text(project.goal), due: text(project.due),
+      startDate: text(project.startDate), status: text(project.status, "steady"),
+      progress: { percent, completedUnits, totalUnits, timePercent: Number(project.progress?.timePercent) || 0 },
+      milestones: { completed: milestones.filter((item) => item.completed).length, total: milestones.length, items: milestones.slice(0, 4) },
+      pendingActions: pendingActions.slice(0, 5),
+      nextAction: nextAction ? { id: nextAction.id, title: nextAction.title, due: nextAction.due, dueTime: nextAction.dueTime } : null,
+    };
+  }
+
   function buildPayload(document, now = new Date()) {
     const today = localDate(now);
     const tasks = list(document && document.tasks).map(normalizeTask);
     const courses = list(document && document.courses).map(normalizeCourse);
+    const projects = list(document && document.projects).map((project) => normalizeProject(project, tasks));
     const scheduleItems = courses.filter((course) => course.day >= 1 && course.day <= 7).map((course) => ({
       id: course.id, kind: "course", title: course.name, location: course.location,
       day: course.day, startSection: course.startSection, endSection: course.endSection, color: course.color,
@@ -56,6 +80,7 @@
       deviceStatus: { state: "ready", battery: null, charging: null, firmware: null },
       schedule: { date: today, items: scheduleItems },
       tasks: { date: today, pendingCount: taskItems.length, items: taskItems.slice(0, 20) },
+      projects: { count: projects.length, pendingActionCount: projects.reduce((count, project) => count + project.pendingActions.length, 0), items: projects.slice(0, 20) },
       syncState: { mode: "pull-only", cursor: null, canWrite: false, transport: "not-connected" },
     };
   }
@@ -74,6 +99,15 @@
     };
   }
 
+  function validateSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return false;
+    if (snapshot.schema !== SCHEMA || snapshot.version !== VERSION || snapshot.type !== "snapshot") return false;
+    if (!snapshot.sync || !Number.isInteger(Number(snapshot.sync.revision)) || Number(snapshot.sync.revision) < 0) return false;
+    if (!snapshot.payload || !snapshot.payload.tasks || !Array.isArray(snapshot.payload.tasks.items)) return false;
+    if (!snapshot.payload.schedule || !Array.isArray(snapshot.payload.schedule.items)) return false;
+    return true;
+  }
+
   function buildMockSnapshot() {
     return buildSnapshot({
       dataState: "mock", source: "local-fixture", revision: 0,
@@ -84,5 +118,5 @@
     });
   }
 
-  return { SCHEMA, VERSION, DATA_STATES, buildPayload, buildSnapshot, buildMockSnapshot, localDate };
+  return { SCHEMA, VERSION, DATA_STATES, buildPayload, buildSnapshot, validateSnapshot, buildMockSnapshot, localDate };
 });
